@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android", "web"],
+  "apple": {
+    "modules": ["PaymentFileSaverModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.paymentfilesaver.PaymentFileSaverModule"]
+  }
+}
