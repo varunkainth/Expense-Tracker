@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -14,6 +14,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../../hooks/useTheme';
+import { formatPeriodLabel, getCurrentMonthPeriod, MonthPeriod } from '../../types/period';
+import { isDateInExpensePeriod } from '../../utils/company-expense-period';
+import CompanyExpenseTotalCard from '../../components/CompanyExpenseTotalCard';
+import CompanyExpenseMonthFilter from '../../components/CompanyExpenseMonthFilter';
 import { phoneRepository } from '../../repositories/company/phone.repository';
 import { employeeRepository } from '../../repositories/company/employee.repository';
 import { EmployeeDetails, PhoneExpense } from '../../types/company';
@@ -28,6 +32,7 @@ export default function PhoneExpenseScreen() {
 
   const [employee, setEmployee] = useState<EmployeeDetails | null>(null);
   const [records, setRecords] = useState<PhoneExpense[]>([]);
+  const [expensePeriod, setExpensePeriod] = useState<MonthPeriod>(getCurrentMonthPeriod);
   const [showForm, setShowForm] = useState(false);
 
   // Form State
@@ -35,6 +40,7 @@ export default function PhoneExpenseScreen() {
   const [particulars, setParticulars] = useState('');
   const [telFaxNo, setTelFaxNo] = useState('');
   const [billNo, setBillNo] = useState('');
+  const [complaintNo, setComplaintNo] = useState('');
   const [amountStr, setAmountStr] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -58,6 +64,15 @@ export default function PhoneExpenseScreen() {
     useCallback(() => {
       loadData();
     }, [loadData])
+  );
+
+  const visibleRecords = useMemo(
+    () => records.filter((item) => isDateInExpensePeriod(item.date, expensePeriod)),
+    [records, expensePeriod],
+  );
+  const oldestExpenseDate = useMemo(
+    () => records.length ? Math.min(...records.map((item) => item.date)) : undefined,
+    [records],
   );
 
   const handleSave = async () => {
@@ -86,6 +101,12 @@ export default function PhoneExpenseScreen() {
       return;
     }
 
+    const vComplaint = validateRequiredText(complaintNo, 'Complaint No');
+    if (!vComplaint.isValid) {
+      Alert.alert('Validation Error', vComplaint.error);
+      return;
+    }
+
     if (!amountStr || parseFloat(amountStr) <= 0) {
       Alert.alert('Validation Error', 'Please enter a valid amount.');
       return;
@@ -106,12 +127,14 @@ export default function PhoneExpenseScreen() {
         particulars: particulars.trim(),
         tel_fax_no: telFaxNo.trim(),
         bill_no: billNo.trim(),
+        complaint_no: complaintNo.trim(),
         amount: amountPaise,
       });
 
       setParticulars('');
       setTelFaxNo('');
       setBillNo('');
+      setComplaintNo('');
       setAmountStr('');
       setDate(todayMidnight());
       setShowForm(false);
@@ -166,6 +189,14 @@ export default function PhoneExpenseScreen() {
             </TouchableOpacity>
           </View>
 
+          <CompanyExpenseMonthFilter
+            period={expensePeriod}
+            onSelect={setExpensePeriod}
+            count={visibleRecords.length}
+            oldestDate={oldestExpenseDate}
+          />
+          <CompanyExpenseTotalCard title="Phone & Fax Expenses" total={visibleRecords.reduce((sum, item) => sum + item.amount, 0)} count={visibleRecords.length} />
+
           {showForm && (
             <View
               style={[
@@ -219,6 +250,12 @@ export default function PhoneExpenseScreen() {
               </View>
 
               <View style={styles.fieldGroup}>
+                <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Complaint No *</Text>
+                <TextInput style={[styles.textInput, { backgroundColor: colors.surfaceVariant, color: colors.text }]} placeholder="Enter complaint number" placeholderTextColor={colors.textMuted} value={complaintNo} keyboardType="number-pad"
+                    onChangeText={(value) => setComplaintNo(value.replace(/\D/g, ''))} />
+              </View>
+
+              <View style={styles.fieldGroup}>
                 <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Amount (₹) *</Text>
                 <TextInput
                   style={[styles.textInput, { backgroundColor: colors.surfaceVariant, color: colors.text, fontSize: 18, fontWeight: '700' }]}
@@ -240,24 +277,24 @@ export default function PhoneExpenseScreen() {
             </View>
           )}
 
-          {records.length === 0 ? (
+          {visibleRecords.length === 0 ? (
             <View style={[styles.emptyCard, { backgroundColor: colors.card, borderRadius: borderRadius.md }]}>
               <MaterialIcons name="phone-in-talk" size={40} color={colors.textMuted} />
-              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No phone or fax bills recorded.</Text>
+              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>{records.length === 0 ? 'No phone or fax bills recorded.' : `No entries for ${formatPeriodLabel(expensePeriod)}.`}</Text>
             </View>
           ) : (
-            records.map((item) => (
+            visibleRecords.map((item) => (
               <View
                 key={item.id}
                 style={[
                   styles.recordCard,
-                  { backgroundColor: colors.card, borderColor: colors.border, borderRadius: borderRadius.md, ...shadows.sm },
+                  { backgroundColor: colors.card, borderColor: colors.border, borderRadius: borderRadius.lg, ...shadows.md },
                 ]}
               >
                 <View style={styles.recordMain}>
                   <Text style={[styles.recordParticulars, { color: colors.text }]}>{item.particulars}</Text>
                   <Text style={[styles.recordMeta, { color: colors.textSecondary }]}>
-                    {formatDate(item.date)} • Tel: {item.tel_fax_no} • Bill: {item.bill_no}
+                    {formatDate(item.date)} • Tel: {item.tel_fax_no} • Bill: {item.bill_no} • Complaint: {item.complaint_no}
                   </Text>
                 </View>
 

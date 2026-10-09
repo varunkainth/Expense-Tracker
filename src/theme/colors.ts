@@ -58,10 +58,10 @@ export const palette = {
 
 export const lightColors = {
   // Backgrounds
-  background: palette.slate50,
+  background: palette.white,
   surface: palette.white,
   surfaceElevated: palette.white,
-  surfaceVariant: palette.slate100,
+  surfaceVariant: palette.slate50,
   card: palette.white,
   modal: palette.white,
 
@@ -88,9 +88,9 @@ export const lightColors = {
   infoBackground: palette.info50,
 
   // Borders & Dividers
-  border: palette.slate200,
+  border: palette.slate100,
   borderFocus: palette.primary600,
-  divider: palette.slate200,
+  divider: palette.slate100,
 
   // Icons
   icon: palette.slate700,
@@ -98,7 +98,7 @@ export const lightColors = {
 
   // Navigation
   tabBarBackground: palette.white,
-  tabBarBorder: palette.slate200,
+  tabBarBorder: palette.slate100,
   tabBarActive: palette.primary600,
   tabBarInactive: palette.slate400,
   headerBackground: palette.white,

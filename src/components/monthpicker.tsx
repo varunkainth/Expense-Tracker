@@ -21,6 +21,8 @@ interface Props {
   selected: MonthPeriod;
   /** Show an "All time" entry at the top. */
   includeAllTime?: boolean;
+  /** Number of months to show, including the current month. */
+  monthsBack?: number;
   onSelect: (period: MonthPeriod) => void;
   onClose: () => void;
 }
@@ -29,15 +31,16 @@ export default function MonthPickerModal({
   visible,
   selected,
   includeAllTime = true,
+  monthsBack = 18,
   onSelect,
   onClose,
 }: Props) {
-  const { colors, spacing, borderRadius, shadows } = useTheme();
+  const { colors, borderRadius, shadows } = useTheme();
 
   const options = useMemo<MonthPeriod[]>(() => {
-    const months = buildMonthOptions(17); // current month + 17 back = 18 total
+    const months = buildMonthOptions(monthsBack);
     return includeAllTime ? [{ kind: 'all' }, ...months] : months;
-  }, [includeAllTime]);
+  }, [includeAllTime, monthsBack]);
 
   const isSelected = (p: MonthPeriod) => {
     if (p.kind === 'all' && selected.kind === 'all') return true;

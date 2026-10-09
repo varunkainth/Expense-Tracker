@@ -8,7 +8,7 @@ export class PhoneRepository {
     const db = await getDatabase();
     if (employeeId) {
       return await db.getAllAsync<PhoneExpense>(
-        `SELECT id, employee_id, date, particulars, tel_fax_no, bill_no, amount, created_at, updated_at
+        `SELECT id, employee_id, date, particulars, tel_fax_no, bill_no, amount, complaint_no, created_at, updated_at
          FROM phone_expense
          WHERE employee_id = ?
          ORDER BY date DESC;`,
@@ -16,7 +16,7 @@ export class PhoneRepository {
       );
     }
     return await db.getAllAsync<PhoneExpense>(
-      `SELECT id, employee_id, date, particulars, tel_fax_no, bill_no, amount, created_at, updated_at
+      `SELECT id, employee_id, date, particulars, tel_fax_no, bill_no, amount, complaint_no, created_at, updated_at
        FROM phone_expense
        ORDER BY date DESC;`
     );
@@ -25,7 +25,7 @@ export class PhoneRepository {
   async getById(id: string): Promise<PhoneExpense | null> {
     const db = await getDatabase();
     return await db.getFirstAsync<PhoneExpense>(
-      `SELECT id, employee_id, date, particulars, tel_fax_no, bill_no, amount, created_at, updated_at
+      `SELECT id, employee_id, date, particulars, tel_fax_no, bill_no, amount, complaint_no, created_at, updated_at
        FROM phone_expense
        WHERE id = ?;`,
       [id]
@@ -39,8 +39,8 @@ export class PhoneRepository {
 
     await db.runAsync(
       `INSERT INTO phone_expense (
-        id, employee_id, date, particulars, tel_fax_no, bill_no, amount, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        id, employee_id, date, particulars, tel_fax_no, bill_no, amount, complaint_no, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
       [
         id,
         data.employee_id,
@@ -49,6 +49,7 @@ export class PhoneRepository {
         data.tel_fax_no,
         data.bill_no,
         data.amount,
+        data.complaint_no,
         timestamp,
         timestamp,
       ]
@@ -62,6 +63,7 @@ export class PhoneRepository {
       tel_fax_no: data.tel_fax_no,
       bill_no: data.bill_no,
       amount: data.amount,
+      complaint_no: data.complaint_no,
       created_at: timestamp,
       updated_at: timestamp,
     };
@@ -75,6 +77,7 @@ export class PhoneRepository {
     }
 
     const timestamp = getCurrentTimestamp();
+    const complaintNo = data.complaint_no ?? existing.complaint_no;
     const employeeId = data.employee_id ?? existing.employee_id;
     const date = data.date ?? existing.date;
     const particulars = data.particulars ?? existing.particulars;
@@ -84,9 +87,9 @@ export class PhoneRepository {
 
     await db.runAsync(
       `UPDATE phone_expense
-       SET employee_id = ?, date = ?, particulars = ?, tel_fax_no = ?, bill_no = ?, amount = ?, updated_at = ?
+       SET employee_id = ?, date = ?, particulars = ?, tel_fax_no = ?, bill_no = ?, amount = ?, complaint_no = ?, updated_at = ?
        WHERE id = ?;`,
-      [employeeId, date, particulars, telFaxNo, billNo, amount, timestamp, id]
+      [employeeId, date, particulars, telFaxNo, billNo, amount, complaintNo, timestamp, id]
     );
 
     return {
@@ -97,6 +100,7 @@ export class PhoneRepository {
       tel_fax_no: telFaxNo,
       bill_no: billNo,
       amount,
+      complaint_no: complaintNo,
       created_at: existing.created_at,
       updated_at: timestamp,
     };

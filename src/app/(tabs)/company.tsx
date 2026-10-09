@@ -1,20 +1,22 @@
-import React, { useCallback, useState } from 'react';
+import { MaterialIcons } from '@expo/vector-icons';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
   ScrollView,
+  StyleSheet,
+  Text,
   TouchableOpacity,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter, useFocusEffect } from 'expo-router';
-import { MaterialIcons } from '@expo/vector-icons';
+import { COMPANY_EXPENSE_TYPES } from '../../constants/company-expenses';
 import { useTheme } from '../../hooks/useTheme';
+import { useTabBackBehavior } from '../../hooks/useTabBackBehavior';
 import { employeeRepository } from '../../repositories/company/employee.repository';
 import { EmployeeDetails } from '../../types/company';
-import { COMPANY_EXPENSE_TYPES } from '../../constants/company-expenses';
 
 export default function CompanyScreen() {
+  useTabBackBehavior();
   const { colors, spacing, borderRadius, shadows, isDark } = useTheme();
   const router = useRouter();
 
@@ -79,20 +81,61 @@ export default function CompanyScreen() {
               <>
                 <Text style={[styles.employeeName, { color: colors.text }]}>{activeEmployee.name}</Text>
                 <Text style={[styles.employeeSub, { color: colors.textSecondary }]}>
-                  {activeEmployee.employee_code} • {activeEmployee.department} ({activeEmployee.location})
+                  {activeEmployee.employee_code} • {activeEmployee.department} ({activeEmployee.grade}) ({activeEmployee.location})
                 </Text>
               </>
             ) : (
               <>
-                <Text style={[styles.employeeName, { color: colors.text }]}>No Employee Selected</Text>
+                <Text style={[styles.employeeName, { color: colors.text }]}>Set Up Work Profile</Text>
                 <Text style={[styles.employeeSub, { color: colors.primary }]}>
-                  Tap to set up employee details
+                  Needed before you save or export company expenses
                 </Text>
               </>
             )}
           </View>
           <MaterialIcons name="chevron-right" size={24} color={colors.textMuted} />
         </TouchableOpacity>
+
+        {!activeEmployee && (
+          <View
+            style={[
+              styles.onboardingCard,
+              {
+                backgroundColor: colors.card,
+                borderRadius: borderRadius.lg,
+                borderColor: colors.border,
+                ...shadows.sm,
+              },
+            ]}
+          >
+            <View style={styles.onboardingHeader}>
+              <View style={[styles.onboardingIcon, { backgroundColor: `${colors.companyAccent}18` }]}>
+                <MaterialIcons name="assignment" size={22} color={colors.companyAccent} />
+              </View>
+              <View style={styles.onboardingCopy}>
+                <Text style={[styles.onboardingTitle, { color: colors.text }]}>Get started</Text>
+                <Text style={[styles.onboardingDesc, { color: colors.textSecondary }]}>
+                  Your profile details are included in company claim exports.
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.onboardingSteps}>
+              <Text style={[styles.onboardingStep, { color: colors.textSecondary }]}>1. Add your employee details.</Text>
+              <Text style={[styles.onboardingStep, { color: colors.textSecondary }]}>2. Record work expenses and attach receipts.</Text>
+              <Text style={[styles.onboardingStep, { color: colors.textSecondary }]}>3. Export monthly reports from Settings → Export.</Text>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.onboardingButton, { backgroundColor: colors.primary, borderRadius: borderRadius.md }]}
+              onPress={() => router.push('/(company)/employee')}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.onboardingButtonText}>Set Up Employee Profile</Text>
+              <MaterialIcons name="arrow-forward" size={18} color="#ffffff" />
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Section Header */}
         <View style={styles.sectionHeader}>
@@ -197,6 +240,39 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '400',
   },
+  onboardingCard: {
+    padding: 16,
+    borderWidth: 1,
+    marginTop: -8,
+    marginBottom: 24,
+  },
+  onboardingHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  onboardingIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  onboardingCopy: { flex: 1 },
+  onboardingTitle: { fontSize: 16, fontWeight: '700', marginBottom: 2 },
+  onboardingDesc: { fontSize: 12, lineHeight: 17 },
+  onboardingSteps: { gap: 7, marginBottom: 14 },
+  onboardingStep: { fontSize: 12, lineHeight: 17 },
+  onboardingButton: {
+    minHeight: 46,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+  },
+  onboardingButtonText: { color: '#ffffff', fontSize: 13, fontWeight: '700' },
   sectionHeader: {
     marginBottom: 14,
   },

@@ -1,4 +1,5 @@
 import { MaterialIcons } from '@expo/vector-icons';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -6,10 +7,11 @@ import {
   Dimensions,
   Platform,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
-  View
+  View,
 } from 'react-native';
 import {
   Gesture,
@@ -29,10 +31,15 @@ import { personalExpenseUndoService } from '@/services/personal-expense-undo.ser
 
 import { DEFAULT_CATEGORY_METAS } from '../../constants/categories';
 import { useTheme } from '../../hooks/useTheme';
+import { useTabBackBehavior } from '../../hooks/useTabBackBehavior';
 import { personalExpenseRepository } from '../../repositories/personal/expense.repository';
-import { PersonalExpenseWithCategory } from '../../types/personal';
+import { categoryRepository } from '../../repositories/personal/category.repository';
+import { Category, PersonalExpenseWithCategory } from '../../types/personal';
 import { formatPaiseToRupees } from '../../utils/currency';
 import { formatDate } from '../../utils/date';
+
+export type PersonalDateFilterType = 'all' | 'today' | 'yesterday' | 'custom' | 'range';
+
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -161,6 +168,7 @@ function computeCategoryBreakdown(
 }
 
 export default function PersonalScreen() {
+  useTabBackBehavior();
   const { colors, spacing, borderRadius, shadows, typography } = useTheme();
   const router = useRouter();
 
@@ -171,12 +179,28 @@ export default function PersonalScreen() {
    */
 
   const [expenses, setExpenses] = useState<PersonalExpenseWithCategory[]>([]);
+  const [expenseCategories, setExpenseCategories] = useState<Category[]>([]);
+  const [categoryFilterId, setCategoryFilterId] = useState<string | null>(null);
   const [monthTotalPaise, setMonthTotalPaise] = useState<number>(0);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [undoExpense, setUndoExpense] =
     useState<PersonalExpenseWithCategory | null>(null);
   const [undoVisible, setUndoVisible] = useState(false);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /*
+   * ==============================
+   * DATE FILTER STATE
+   * ==============================
+   */
+  const [dateFilter, setDateFilter] = useState<PersonalDateFilterType>('all');
+  const [customFilterDate, setCustomFilterDate] = useState<number>(() => Date.now());
+  const [showDatePicker, setShowDatePicker] = useState<boolean>(false);
+  const [showDateSelection, setShowDateSelection] = useState(false);
+  const [datePickerMode, setDatePickerMode] = useState<'single' | 'range'>('single');
+  const [pickerTarget, setPickerTarget] = useState<'single' | 'range-start' | 'range-end'>('single');
+  const [rangeStartDate, setRangeStartDate] = useState<number>(() => Date.now());
+  const [rangeEndDate, setRangeEndDate] = useState<number>(() => Date.now());
 
   /*
    * ==============================
@@ -194,6 +218,57 @@ export default function PersonalScreen() {
 
   /*
    * ==============================
+   * FILTER COMPUTATION
+   * ==============================
+   */
+  const dateFilterInfo = useMemo(() => {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0).getTime();
+    const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999).getTime();
+
+    if (dateFilter === 'today') {
+      return { start: todayStart, end: todayEnd, label: 'Today' };
+    }
+    if (dateFilter === 'yesterday') {
+      const yStart = todayStart - 86400000;
+      const yEnd = todayEnd - 86400000;
+      return { start: yStart, end: yEnd, label: 'Yesterday' };
+    }
+    if (dateFilter === 'custom') {
+      const d = new Date(customFilterDate);
+      const cStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime();
+      const cEnd = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999).getTime();
+      return { start: cStart, end: cEnd, label: formatDate(cStart) };
+    }
+    if (dateFilter === 'range') {
+      const startDate = new Date(rangeStartDate);
+      const endDate = new Date(rangeEndDate);
+      const start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0, 0).getTime();
+      const end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999).getTime();
+      return { start, end, label: `${formatDate(start)} – ${formatDate(end)}` };
+    }
+    return { label: 'All Days' };
+  }, [dateFilter, customFilterDate, rangeStartDate, rangeEndDate]);
+
+  const filteredExpenses = useMemo(() => expenses.filter((expense) => {
+    if (categoryFilterId && expense.category_id !== categoryFilterId) return false;
+    if (dateFilter === 'all') return true;
+    const { start, end } = dateFilterInfo;
+    return start === undefined || end === undefined ||
+      (expense.expense_date >= start && expense.expense_date <= end);
+  }), [expenses, categoryFilterId, dateFilter, dateFilterInfo]);
+
+  const filteredTotalPaise = useMemo(() => {
+    return filteredExpenses.reduce((sum, e) => sum + safeNumber(e.amount), 0);
+  }, [filteredExpenses]);
+  const selectedCategoryName = expenseCategories.find((category) => category.id === categoryFilterId)?.name;
+  const hasActiveFilter = dateFilter !== 'all' || categoryFilterId !== null;
+  const activeFilterLabel = [dateFilter !== 'all' ? dateFilterInfo.label : null, selectedCategoryName]
+    .filter(Boolean)
+    .join(' · ');
+
+  /*
+   * ==============================
    * MONTH CARD ANIMATION
    * ==============================
    */
@@ -201,20 +276,6 @@ export default function PersonalScreen() {
   const translateX = useSharedValue(0);
   const cardOpacity = useSharedValue(1);
   const isAnimating = useSharedValue(false);
-
-  /*
-   * ==============================
-   * FAB STATE
-   * ==============================
-   */
-
-  const [fabOpen, setFabOpen] = useState(false);
-
-  const fabRotation = useSharedValue(0);
-  const fabBackdropOpacity = useSharedValue(0);
-  const fabActionsOpacity = useSharedValue(0);
-  const quickAddTranslateY = useSharedValue(20);
-  const addExpenseTranslateY = useSharedValue(20);
 
   /*
    * ==============================
@@ -235,45 +296,50 @@ export default function PersonalScreen() {
    * ==============================
    */
 
-  const loadData = useCallback(async (month: MonthData) => {
+  const loadData = useCallback(async (
+    month: MonthData,
+    filterRange?: { startDate: number; endDate: number },
+  ) => {
     try {
       const startOfMonth = safeNumber(month.startOfMonth);
       const endOfMonth = safeNumber(month.endOfMonth);
 
-      const [monthExpenses, total] = await Promise.all([
+      const [monthExpenses, total, categories] = await Promise.all([
         personalExpenseRepository.getAll({
-          startDate: startOfMonth,
-          endDate: endOfMonth,
+          startDate: filterRange?.startDate ?? startOfMonth,
+          endDate: filterRange?.endDate ?? endOfMonth,
         }),
         personalExpenseRepository.getTotalExpenses(startOfMonth, endOfMonth),
+        categoryRepository.getAll(),
       ]);
 
-      /*
-       * Empty month is valid.
-       *
-       * Example:
-       *
-       * August 2026
-       * expenses = []
-       * total = 0
-       */
-
       const safeExpenses = Array.isArray(monthExpenses)
-        ? monthExpenses.slice(0, 10).map((expense) => ({
+        ? monthExpenses.map((expense) => ({
           ...expense,
           amount: safeNumber(expense.amount),
         }))
         : [];
 
       setExpenses(safeExpenses);
+      setExpenseCategories(categories);
       setMonthTotalPaise(safeNumber(total));
     } catch (error) {
       console.error('Error loading personal expenses:', error);
 
       setExpenses([]);
+      setExpenseCategories([]);
       setMonthTotalPaise(0);
     }
   }, []);
+
+  const loadVisibleData = useCallback(async (month: MonthData) => {
+    const { start, end } = dateFilterInfo;
+    const filterRange = dateFilter !== 'all' && start !== undefined && end !== undefined
+      ? { startDate: start, endDate: end }
+      : undefined;
+    await loadData(month, filterRange);
+  }, [dateFilter, dateFilterInfo, loadData]);
+
 
   const clearUndoTimer = useCallback(() => {
     if (undoTimerRef.current) {
@@ -318,7 +384,7 @@ export default function PersonalScreen() {
       setUndoVisible(false);
 
       // Reload the month currently being displayed.
-      await loadData(monthData);
+      await loadVisibleData(monthData);
     } catch (error) {
       console.error('Failed to undo expense deletion:', error);
 
@@ -326,7 +392,7 @@ export default function PersonalScreen() {
       setUndoExpense(expenseToRestore);
       setUndoVisible(true);
     }
-  }, [undoExpense, clearUndoTimer, loadData, monthData]);
+  }, [undoExpense, clearUndoTimer, loadVisibleData, monthData]);
 
   useEffect(() => {
     const unsubscribe = personalExpenseUndoService.subscribe((expense) => {
@@ -357,8 +423,8 @@ export default function PersonalScreen() {
    */
 
   useEffect(() => {
-    loadData(monthData);
-  }, [monthData, loadData]);
+    loadVisibleData(monthData);
+  }, [monthData, loadVisibleData]);
 
   /*
    * ==============================
@@ -370,7 +436,6 @@ export default function PersonalScreen() {
    *
    * This is important after:
    * - Add Expense
-   * - Quick Add
    * - Editing an expense
    * - Deleting an expense
    */
@@ -388,34 +453,17 @@ export default function PersonalScreen() {
       /*
        * Reload expenses from database.
        *
-       * This makes newly added expenses
-       * appear automatically when we come
-       * back from Add Expense / Quick Add.
+       * This makes newly added expenses appear when returning from Add Expense.
        */
       const currentMonth = getMonthData(0);
 
-      loadData(currentMonth);
+      loadVisibleData(currentMonth);
 
-      /*
-       * Close FAB whenever screen becomes active.
-       */
-      setFabOpen(false);
-
-      fabRotation.value = 0;
-      fabBackdropOpacity.value = 0;
-      fabActionsOpacity.value = 0;
-      quickAddTranslateY.value = 20;
-      addExpenseTranslateY.value = 20;
     }, [
-      loadData,
+      loadVisibleData,
       translateX,
       cardOpacity,
       isAnimating,
-      fabRotation,
-      fabBackdropOpacity,
-      fabActionsOpacity,
-      quickAddTranslateY,
-      addExpenseTranslateY,
     ]),
   );
 
@@ -433,11 +481,11 @@ export default function PersonalScreen() {
     setRefreshing(true);
 
     try {
-      await loadData(monthData);
+      await loadVisibleData(monthData);
     } finally {
       setRefreshing(false);
     }
-  }, [loadData, monthData]);
+  }, [loadVisibleData, monthData]);
 
   /*
    * ==============================
@@ -680,132 +728,6 @@ export default function PersonalScreen() {
 
   /*
    * ==============================
-   * FAB TOGGLE
-   * ==============================
-   */
-
-  const toggleFab = useCallback(() => {
-    const nextOpen = !fabOpen;
-
-    setFabOpen(nextOpen);
-
-    if (nextOpen) {
-      /*
-       * Rotate + to x.
-       */
-
-      fabRotation.value = withSpring(1, {
-        damping: 14,
-        stiffness: 180,
-      });
-
-      /*
-       * Dark background.
-       */
-
-      fabBackdropOpacity.value = withTiming(1, {
-        duration: 180,
-      });
-
-      /*
-       * Actions appear.
-       */
-
-      fabActionsOpacity.value = withTiming(1, {
-        duration: 150,
-      });
-
-      /*
-       * Add Expense appears first.
-       */
-
-      addExpenseTranslateY.value = withSpring(0, {
-        damping: 15,
-        stiffness: 180,
-      });
-
-      /*
-       * Quick Add appears
-       * slightly after it.
-       */
-
-      quickAddTranslateY.value = withSpring(0, {
-        damping: 15,
-        stiffness: 180,
-      });
-    } else {
-      /*
-       * Close FAB.
-       */
-
-      fabRotation.value = withSpring(0, {
-        damping: 14,
-        stiffness: 180,
-      });
-
-      fabBackdropOpacity.value = withTiming(0, {
-        duration: 140,
-      });
-
-      fabActionsOpacity.value = withTiming(0, {
-        duration: 100,
-      });
-
-      quickAddTranslateY.value = withTiming(20, {
-        duration: 120,
-      });
-
-      addExpenseTranslateY.value = withTiming(20, {
-        duration: 120,
-      });
-    }
-  }, [
-    fabOpen,
-    fabRotation,
-    fabBackdropOpacity,
-    fabActionsOpacity,
-    quickAddTranslateY,
-    addExpenseTranslateY,
-  ]);
-
-  /*
-   * ==============================
-   * FAB ANIMATION STYLES
-   * ==============================
-   */
-
-  const fabMainAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [
-      {
-        rotate: `${fabRotation.value * 45}deg`,
-      },
-    ],
-  }));
-
-  const fabBackdropAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: fabBackdropOpacity.value,
-  }));
-
-  const quickAddAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: fabActionsOpacity.value,
-    transform: [
-      {
-        translateY: quickAddTranslateY.value,
-      },
-    ],
-  }));
-
-  const addExpenseAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: fabActionsOpacity.value,
-    transform: [
-      {
-        translateY: addExpenseTranslateY.value,
-      },
-    ],
-  }));
-
-  /*
-   * ==============================
    * CATEGORY BREAKDOWN
    * ==============================
    */
@@ -886,18 +808,21 @@ export default function PersonalScreen() {
           </View>
 
           <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Open spending insights"
+            onPress={() => router.push('/insights')}
             style={[
-              styles.historyBtn,
+              styles.insightsButton,
               {
-                backgroundColor: colors.surfaceVariant,
+                backgroundColor: colors.primaryLight,
                 borderRadius: borderRadius.full,
               },
             ]}
-            onPress={() => router.push('/(personal)/history')}
-            activeOpacity={0.7}
           >
-            <MaterialIcons name="history" size={22} color={colors.text} />
+            <MaterialIcons name="insights" size={18} color={colors.primary} />
+            <Text style={[styles.insightsButtonText, { color: colors.primary }]}>Insights</Text>
           </TouchableOpacity>
+
         </View>
 
         {/* =========================
@@ -1000,6 +925,233 @@ export default function PersonalScreen() {
         </GestureDetector>
 
         {/* =========================
+            DATE FILTER SECTION
+        ========================== */}
+        <View style={styles.filterSection}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filterChipScroll}
+          >
+            {[
+              { key: 'all' as const, label: 'All Days', icon: 'view-list' as const },
+              { key: 'today' as const, label: 'Today', icon: 'today' as const },
+              { key: 'yesterday' as const, label: 'Yesterday', icon: 'history' as const },
+              {
+                key: 'custom' as const,
+                label: dateFilter === 'custom'
+                  ? formatDate(customFilterDate)
+                  : dateFilter === 'range' ? dateFilterInfo.label : 'Pick Date',
+                icon: 'calendar-today' as const,
+              },
+            ].map((chip) => {
+              const isSelected = dateFilter === chip.key || (chip.key === 'custom' && dateFilter === 'range');
+              return (
+                <TouchableOpacity
+                  key={chip.key}
+                  style={[
+                    styles.filterChip,
+                    {
+                      backgroundColor: isSelected ? colors.primary : colors.card,
+                      borderColor: isSelected ? colors.primary : colors.border,
+                      borderRadius: borderRadius.lg,
+                      ...shadows.sm,
+                    },
+                  ]}
+                  onPress={() => {
+                    if (chip.key === 'custom') {
+                      setShowDateSelection((visible) => !visible);
+                    } else {
+                      setDateFilter(chip.key);
+                      setShowDateSelection(false);
+                    }
+                  }}
+                  activeOpacity={0.75}
+                >
+                  <MaterialIcons
+                    name={chip.icon}
+                    size={15}
+                    color={isSelected ? '#ffffff' : colors.textSecondary}
+                  />
+                  <Text
+                    style={[
+                      styles.filterChipText,
+                      {
+                        color: isSelected ? '#ffffff' : colors.text,
+                        fontWeight: isSelected ? '700' : '500',
+                      },
+                    ]}
+                  >
+                    {chip.label}
+                  </Text>
+                  {isSelected && chip.key !== 'all' && (
+                    <TouchableOpacity
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        setDateFilter('all');
+                        setShowDateSelection(false);
+                      }}
+                      hitSlop={8}
+                    >
+                      <MaterialIcons name="close" size={14} color="#ffffff" style={{ marginLeft: 2 }} />
+                    </TouchableOpacity>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
+          <Text style={[styles.categoryFilterLabel, { color: colors.textSecondary }]}>CATEGORY</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.categoryFilterScroll}
+          >
+            {[{ id: null, name: 'All categories', icon: 'apps' }, ...expenseCategories.map((category) => ({
+              id: category.id,
+              name: category.name,
+              icon: category.is_default === 1
+                ? DEFAULT_CATEGORY_METAS[category.name]?.icon || 'category'
+                : category.icon || DEFAULT_CATEGORY_METAS[category.name]?.icon || 'category',
+            }))].map((category) => {
+              const selected = categoryFilterId === category.id;
+              return (
+                <TouchableOpacity
+                  key={category.id || 'all-categories'}
+                  style={[styles.categoryFilterChip, { backgroundColor: selected ? colors.primary : colors.card, borderColor: selected ? colors.primary : colors.border, borderRadius: borderRadius.full }]}
+                  onPress={() => setCategoryFilterId(category.id)}
+                  activeOpacity={0.75}
+                >
+                  <MaterialIcons name={category.icon as any} size={16} color={selected ? '#fff' : colors.primary} />
+                  <Text style={[styles.categoryFilterText, { color: selected ? '#fff' : colors.text }]}>{category.name}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
+          {showDateSelection && (
+            <View style={[styles.dateSelectionCard, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: borderRadius.md }]}>
+              <Text style={[styles.dateSelectionTitle, { color: colors.text }]}>Choose a date filter</Text>
+              <View style={styles.dateModeRow}>
+                {(['single', 'range'] as const).map((mode) => {
+                  const selected = datePickerMode === mode;
+                  return (
+                    <TouchableOpacity
+                      key={mode}
+                      onPress={() => setDatePickerMode(mode)}
+                      style={[styles.dateModeButton, { backgroundColor: selected ? colors.primary : colors.surfaceVariant, borderRadius: borderRadius.md }]}
+                    >
+                      <Text style={[styles.dateModeText, { color: selected ? '#fff' : colors.text }]}>{mode === 'single' ? 'Single day' : 'Date range'}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              {datePickerMode === 'single' ? (
+                <TouchableOpacity
+                  style={[styles.dateChoiceButton, { borderColor: colors.border, borderRadius: borderRadius.md }]}
+                  onPress={() => { setPickerTarget('single'); setShowDatePicker(true); }}
+                >
+                  <Text style={[styles.dateChoiceLabel, { color: colors.textSecondary }]}>Date</Text>
+                  <Text style={[styles.dateChoiceValue, { color: colors.text }]}>{formatDate(customFilterDate)}</Text>
+                  <MaterialIcons name="calendar-today" size={18} color={colors.primary} />
+                </TouchableOpacity>
+              ) : (
+                <View style={styles.rangeChoiceRow}>
+                  {([
+                    ['range-start', 'From', rangeStartDate],
+                    ['range-end', 'To', rangeEndDate],
+                  ] as const).map(([target, label, timestamp]) => (
+                    <TouchableOpacity
+                      key={target}
+                      style={[styles.dateChoiceButton, styles.rangeDateChoice, { borderColor: colors.border, borderRadius: borderRadius.md }]}
+                      onPress={() => { setPickerTarget(target); setShowDatePicker(true); }}
+                    >
+                      <Text style={[styles.dateChoiceLabel, { color: colors.textSecondary }]}>{label}</Text>
+                      <Text style={[styles.dateChoiceValue, { color: colors.text }]}>{formatDate(timestamp)}</Text>
+                      <MaterialIcons name="calendar-today" size={18} color={colors.primary} />
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+              <View style={styles.dateSelectionActions}>
+                <TouchableOpacity onPress={() => setShowDateSelection(false)}>
+                  <Text style={[styles.cancelDateText, { color: colors.textSecondary }]}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.applyDateButton, { backgroundColor: colors.primary, borderRadius: borderRadius.md }]}
+                  onPress={() => {
+                    setDateFilter(datePickerMode === 'single' ? 'custom' : 'range');
+                    setShowDateSelection(false);
+                  }}
+                >
+                  <Text style={styles.applyDateText}>Apply</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {/* Active Filter Info Banner */}
+          {(dateFilter !== 'all' || categoryFilterId !== null) && (
+            <View
+              style={[
+                styles.activeFilterBanner,
+                {
+                  backgroundColor: `${colors.primary}12`,
+                  borderColor: `${colors.primary}30`,
+                  borderRadius: borderRadius.md,
+                },
+              ]}
+            >
+              <View style={styles.activeFilterLeft}>
+                <MaterialIcons name="filter-list" size={16} color={colors.primary} />
+                <Text style={[styles.activeFilterText, { color: colors.text }]}>
+                  {dateFilter !== 'all' ? dateFilterInfo.label : 'Filtered'}
+                  {categoryFilterId ? ` · ${selectedCategoryName || 'Category'}` : ''}:{' '}
+                  <Text style={{ fontWeight: '700', color: colors.primary }}>
+                    {filteredExpenses.length} {filteredExpenses.length === 1 ? 'expense' : 'expenses'} · {formatPaiseToRupees(filteredTotalPaise)}
+                  </Text>
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setDateFilter('all')}
+                style={styles.clearFilterButton}
+              >
+                <Text style={[styles.clearFilterText, { color: colors.primary }]}>Show All</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+
+        {showDatePicker && (
+          <DateTimePicker
+            value={new Date(pickerTarget === 'single' ? customFilterDate : pickerTarget === 'range-start' ? rangeStartDate : rangeEndDate)}
+            maximumDate={new Date()}
+            mode="date"
+            display={Platform.OS === 'ios' ? 'inline' : 'default'}
+            neutralButton={Platform.OS === 'android' ? { label: 'Clear' } : undefined}
+            onValueChange={(_, selectedDate) => {
+              const timestamp = selectedDate.getTime();
+              if (pickerTarget === 'single') {
+                setCustomFilterDate(timestamp);
+              } else if (pickerTarget === 'range-start') {
+                setRangeStartDate(timestamp);
+                if (timestamp > rangeEndDate) setRangeEndDate(timestamp);
+              } else {
+                setRangeEndDate(timestamp);
+                if (timestamp < rangeStartDate) setRangeStartDate(timestamp);
+              }
+              setShowDatePicker(false);
+            }}
+            onDismiss={() => setShowDatePicker(false)}
+            onNeutralButtonPress={() => {
+              setShowDatePicker(false);
+              setDateFilter('all');
+              setShowDateSelection(false);
+            }}
+          />
+        )}
+
+        {/* =========================
             EXPENSE HEADER
         ========================== */}
 
@@ -1012,34 +1164,22 @@ export default function PersonalScreen() {
               },
             ]}
           >
-            {monthData.isCurrentMonth
+            {dateFilter !== 'all'
+              ? `${dateFilterInfo.label} Expenses`
+              : monthData.isCurrentMonth
               ? 'Recent Expenses'
               : `${monthData.label} Expenses`}
           </Text>
-
-          {expenses.length > 0 && (
-            <TouchableOpacity
-              onPress={() => router.push('/(personal)/history')}
-            >
-              <Text
-                style={[
-                  styles.seeAllText,
-                  {
-                    color: colors.primary,
-                  },
-                ]}
-              >
-                View All
-              </Text>
-            </TouchableOpacity>
-          )}
+          <Text style={[styles.sectionCountText, { color: colors.textSecondary }]}>
+            {filteredExpenses.length} {filteredExpenses.length === 1 ? 'item' : 'items'}
+          </Text>
         </View>
 
         {/* =========================
             EMPTY STATE
         ========================== */}
 
-        {expenses.length === 0 ? (
+        {filteredExpenses.length === 0 ? (
           <View
             style={[
               styles.emptyCard,
@@ -1063,7 +1203,9 @@ export default function PersonalScreen() {
                 },
               ]}
             >
-              {monthData.isCurrentMonth
+              {hasActiveFilter
+                ? `No expenses for ${activeFilterLabel}`
+                : monthData.isCurrentMonth
                 ? 'No expenses yet'
                 : `No expenses in ${monthData.label}`}
             </Text>
@@ -1076,20 +1218,40 @@ export default function PersonalScreen() {
                 },
               ]}
             >
-              {monthData.isCurrentMonth
+              {hasActiveFilter
+                ? `There are no expenses recorded for ${activeFilterLabel}.`
+                : monthData.isCurrentMonth
                 ? 'Tap the + button to record your first expense.'
                 : 'There are no recorded expenses for this month. Swipe left to check an older month.'}
             </Text>
+
+            {hasActiveFilter && (
+              <TouchableOpacity
+                style={[
+                  styles.emptyActionBtn,
+                  {
+                    backgroundColor: colors.primary,
+                    borderRadius: borderRadius.md,
+                  },
+                ]}
+                onPress={() => setDateFilter('all')}
+              >
+                <Text style={styles.emptyActionBtnText}>View All Month Expenses</Text>
+              </TouchableOpacity>
+            )}
           </View>
         ) : (
           /* =========================
              EXPENSE LIST
           ========================== */
 
-          expenses.map((expense) => {
-            const categoryMeta =
-              DEFAULT_CATEGORY_METAS[expense.category_name || 'Other'] ||
-              DEFAULT_CATEGORY_METAS.Other;
+          filteredExpenses.map((expense) => {
+
+            const namedMeta = DEFAULT_CATEGORY_METAS[expense.category_name || 'Other'];
+            const categoryMeta = namedMeta || {
+              ...DEFAULT_CATEGORY_METAS.Other,
+              icon: expense.category_icon || 'category',
+            };
 
             const safeAmount = safeNumber(expense.amount);
 
@@ -1150,6 +1312,12 @@ export default function PersonalScreen() {
                     {formatDate(expense.expense_date)} •{' '}
                     {expense.payment_method}
                   </Text>
+
+                  {expense.subcategory_name ? (
+                    <Text style={[styles.expenseDescription, { color: colors.textSecondary }]} numberOfLines={1}>
+                      {expense.subcategory_name}
+                    </Text>
+                  ) : null}
 
                   {expense.description ? (
                     <Text
@@ -1214,143 +1382,22 @@ export default function PersonalScreen() {
 
       {monthData.isCurrentMonth && (
         <>
-          {/* BACKDROP */}
-
-          <Animated.View
-            style={[styles.fabBackdrop, fabBackdropAnimatedStyle]}
-            pointerEvents={fabOpen ? 'auto' : 'none'}
-          >
-            <TouchableOpacity
-              style={styles.fabBackdropTouch}
-              activeOpacity={1}
-              onPress={() => {
-                if (fabOpen) {
-                  toggleFab();
-                }
-              }}
-            />
-          </Animated.View>
-
-          {/* FAB CONTAINER */}
-
           <View style={styles.fabContainer} pointerEvents="box-none">
-            {/* QUICK ADD */}
-
-            <Animated.View
-              style={[styles.fabActionWrapper, quickAddAnimatedStyle]}
-              pointerEvents={fabOpen ? 'auto' : 'none'}
+            <TouchableOpacity
+              style={[
+                styles.fabMain,
+                {
+                  backgroundColor: colors.personalAccent,
+                  ...shadows.lg,
+                },
+              ]}
+              onPress={() => router.push('/(personal)/add-expense')}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Add expense"
             >
-              <View
-                style={[
-                  styles.fabActionLabel,
-                  {
-                    backgroundColor: colors.card,
-                    ...shadows.sm,
-                  },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.fabActionLabelText,
-                    {
-                      color: colors.text,
-                    },
-                  ]}
-                >
-                  Quick Add
-                </Text>
-              </View>
-
-              <TouchableOpacity
-                style={[
-                  styles.fabSmall,
-                  {
-                    backgroundColor: '#ffffff',
-                    ...shadows.md,
-                  },
-                ]}
-                onPress={() => {
-                  setFabOpen(false);
-
-                  fabRotation.value = withSpring(0);
-                  fabBackdropOpacity.value = withTiming(0);
-                  fabActionsOpacity.value = withTiming(0);
-
-                  router.push('/(personal)/quick-add');
-                }}
-                activeOpacity={0.8}
-              >
-                <MaterialIcons name="bolt" size={23} color="#4f46e5" />
-              </TouchableOpacity>
-            </Animated.View>
-
-            {/* ADD EXPENSE */}
-
-            <Animated.View
-              style={[styles.fabActionWrapper, addExpenseAnimatedStyle]}
-              pointerEvents={fabOpen ? 'auto' : 'none'}
-            >
-              <View
-                style={[
-                  styles.fabActionLabel,
-                  {
-                    backgroundColor: colors.card,
-                    ...shadows.sm,
-                  },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.fabActionLabelText,
-                    {
-                      color: colors.text,
-                    },
-                  ]}
-                >
-                  Add Expense
-                </Text>
-              </View>
-
-              <TouchableOpacity
-                style={[
-                  styles.fabSmall,
-                  {
-                    backgroundColor: colors.personalAccent,
-                    ...shadows.md,
-                  },
-                ]}
-                onPress={() => {
-                  setFabOpen(false);
-
-                  fabRotation.value = withSpring(0);
-                  fabBackdropOpacity.value = withTiming(0);
-                  fabActionsOpacity.value = withTiming(0);
-
-                  router.push('/(personal)/add-expense');
-                }}
-                activeOpacity={0.8}
-              >
-                <MaterialIcons name="add" size={25} color="#ffffff" />
-              </TouchableOpacity>
-            </Animated.View>
-
-            {/* MAIN FAB */}
-
-            <Animated.View style={fabMainAnimatedStyle}>
-              <TouchableOpacity
-                style={[
-                  styles.fabMain,
-                  {
-                    backgroundColor: colors.personalAccent,
-                    ...shadows.lg,
-                  },
-                ]}
-                onPress={toggleFab}
-                activeOpacity={0.85}
-              >
-                <MaterialIcons name="add" size={30} color="#ffffff" />
-              </TouchableOpacity>
-            </Animated.View>
+              <MaterialIcons name="add" size={30} color="#ffffff" />
+            </TouchableOpacity>
           </View>
 
           {undoVisible && undoExpense && (
@@ -1461,11 +1508,18 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  historyBtn: {
-    width: 42,
-    height: 42,
+  insightsButton: {
+    minHeight: 40,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 6,
+  },
+
+  insightsButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
   },
 
   /*
@@ -1555,16 +1609,102 @@ const styles = StyleSheet.create({
 
   /*
    * ==========================
+   * DATE FILTER
+   * ==========================
+   */
+
+  filterSection: {
+    marginTop: 18,
+    marginBottom: 10,
+  },
+
+  filterChipScroll: {
+    gap: 8,
+    paddingVertical: 2,
+    paddingHorizontal: 2,
+  },
+
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+  },
+
+  filterChipText: {
+    fontSize: 13,
+  },
+  categoryFilterLabel: { marginTop: 10, marginLeft: 4, marginBottom: 6, fontSize: 10, fontWeight: '700', letterSpacing: 0.7 },
+  categoryFilterScroll: { gap: 8, paddingVertical: 2, paddingHorizontal: 2 },
+  categoryFilterChip: { minHeight: 36, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 11, borderWidth: 1 },
+  categoryFilterText: { fontSize: 12, fontWeight: '600' },
+
+  dateSelectionCard: {
+    marginTop: 10,
+    padding: 12,
+    borderWidth: 1,
+    gap: 10,
+  },
+
+  dateSelectionTitle: { fontSize: 14, fontWeight: '700' },
+  dateModeRow: { flexDirection: 'row', gap: 8 },
+  dateModeButton: { flex: 1, minHeight: 40, alignItems: 'center', justifyContent: 'center' },
+  dateModeText: { fontSize: 13, fontWeight: '600' },
+  rangeChoiceRow: { flexDirection: 'row', gap: 8 },
+  dateChoiceButton: { minHeight: 48, borderWidth: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, gap: 8 },
+  rangeDateChoice: { flex: 1 },
+  dateChoiceLabel: { fontSize: 12 },
+  dateChoiceValue: { flex: 1, fontSize: 13, fontWeight: '600' },
+  dateSelectionActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 16 },
+  cancelDateText: { fontSize: 13, fontWeight: '600', padding: 10 },
+  applyDateButton: { minWidth: 80, minHeight: 40, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14 },
+  applyDateText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+
+  activeFilterBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginTop: 10,
+    borderWidth: 1,
+  },
+
+  activeFilterLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flex: 1,
+  },
+
+  activeFilterText: {
+    fontSize: 12,
+  },
+
+  clearFilterButton: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+
+  clearFilterText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+
+  /*
+   * ==========================
    * SECTION
    * ==========================
    */
 
   sectionHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 14,
-    marginTop: 4,
+    justifyContent: 'space-between',
+    marginBottom: 12,
+    marginTop: 8,
   },
 
   sectionTitle: {
@@ -1572,9 +1712,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  seeAllText: {
-    fontSize: 14,
-    fontWeight: '600',
+  sectionCountText: {
+    fontSize: 13,
+    fontWeight: '500',
   },
 
   /*
@@ -1604,6 +1744,19 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     paddingHorizontal: 16,
   },
+
+  emptyActionBtn: {
+    marginTop: 16,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+  },
+
+  emptyActionBtnText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+
 
   /*
    * ==========================
@@ -1662,22 +1815,6 @@ const styles = StyleSheet.create({
 
   /*
    * ==========================
-   * FAB BACKDROP
-   * ==========================
-   */
-
-  fabBackdrop: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(0, 0, 0, 0.18)',
-    zIndex: 20,
-  },
-
-  fabBackdropTouch: {
-    flex: 1,
-  },
-
-  /*
-   * ==========================
    * FAB
    * ==========================
    */
@@ -1698,31 +1835,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
-  fabSmall: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  fabActionWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 14,
-    gap: 10,
-  },
-
-  fabActionLabel: {
-    paddingHorizontal: 13,
-    paddingVertical: 8,
-    borderRadius: 10,
-  },
-
-  fabActionLabelText: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
   undoSnackbar: {
     position: 'absolute',
     left: 16,

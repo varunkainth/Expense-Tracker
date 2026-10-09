@@ -15,12 +15,20 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../hooks/useTheme';
+import { formatPeriodLabel, getCurrentMonthPeriod, MonthPeriod } from '../../types/period';
+import { doesExpenseRangeOverlapPeriod } from '../../utils/company-expense-period';
+import CompanyExpenseTotalCard from '../../components/CompanyExpenseTotalCard';
+import CompanyExpenseMonthFilter from '../../components/CompanyExpenseMonthFilter';
 import { employeeRepository } from '../../repositories/company/employee.repository';
 import { hotelRepository } from '../../repositories/company/hotel.repository';
 import { EmployeeDetails, HotelExpense } from '../../types/company';
 import { formatPaiseToRupees, rupeesToPaise } from '../../utils/currency';
 import { formatDate } from '../../utils/date';
 import { validateHotelStay, validateRequiredText } from '../../utils/validation';
+import CompanyExpenseAttachmentsModal from '../../components/CompanyExpenseAttachmentsModal';
+import ExpenseAttachmentStatusButton from '../../components/ExpenseAttachmentStatusButton';
+import ExpenseAttachmentDrafts from '../../components/ExpenseAttachmentDrafts';
+import { addExpenseAttachment, deleteExpenseAttachments, getExpenseAttachmentCounts, getExpenseAttachmentErrorMessage, PickedExpenseAttachment } from '../../services/company-expense-attachments.service';
 
 function normalizeToMidnight(input: number | Date): number {
   const d = input instanceof Date ? new Date(input) : new Date(input);
@@ -38,24 +46,30 @@ export default function HotelScreen() {
 
   const [employee, setEmployee] = useState<EmployeeDetails | null>(null);
   const [records, setRecords] = useState<HotelExpense[]>([]);
+  const [expensePeriod, setExpensePeriod] = useState<MonthPeriod>(getCurrentMonthPeriod);
+  const [attachmentCounts, setAttachmentCounts] = useState<Record<string, number>>({});
   const [showForm, setShowForm] = useState(false);
+  const [attachmentExpenseId, setAttachmentExpenseId] = useState<string | null>(null);
+  const [attachmentDrafts, setAttachmentDrafts] = useState<PickedExpenseAttachment[]>([]);
+
+  const ONE_DAY_MS = 1000 * 60 * 60 * 24;
 
   // Form state
   const [hotelName, setHotelName] = useState('');
   const [billNo, setBillNo] = useState('');
+  const [complaintNo, setComplaintNo] = useState('');
   const [ratePerDayStr, setRatePerDayStr] = useState('');
   const [foodAmountStr, setFoodAmountStr] = useState('');
   const [startDate, setStartDate] = useState<number>(todayMidnight);
-  const [endDate, setEndDate] = useState<number>(todayMidnight);
+  const [endDate, setEndDate] = useState<number>(() => todayMidnight() + 1000 * 60 * 60 * 24);
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [showEndPicker, setShowEndPicker] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // Derived: number of days is inclusive of both check-in and check-out days.
+  // Hotel duration is the number of nights between check-in and check-out.
   const derivedDays = useMemo(() => {
     const MS_PER_DAY = 1000 * 60 * 60 * 24;
-    const diff = Math.round((endDate - startDate) / MS_PER_DAY) + 1;
-    return diff > 0 ? diff : 1;
+    return Math.max(0, Math.round((endDate - startDate) / MS_PER_DAY));
   }, [startDate, endDate]);
 
   const loadData = useCallback(async () => {
@@ -65,6 +79,7 @@ export default function HotelScreen() {
         setEmployee(emps[0]);
         const list = await hotelRepository.getAll(emps[0].id);
         setRecords(list);
+        setAttachmentCounts(await getExpenseAttachmentCounts('hotel', list.map((item) => item.id)));
       } else {
         setEmployee(null);
         setRecords([]);
@@ -90,8 +105,10 @@ export default function HotelScreen() {
 
     const ts = normalizeToMidnight(selected);
     setStartDate(ts);
-    // Keep endDate >= startDate
-    if (endDate < ts) setEndDate(ts);
+    // Keep endDate at least 1 night after startDate
+    if (endDate <= ts) {
+      setEndDate(ts + ONE_DAY_MS);
+    }
   };
 
   const onEndDateChange = (
@@ -103,19 +120,29 @@ export default function HotelScreen() {
     if (!selected) return;
 
     const ts = normalizeToMidnight(selected);
-    // Clamp in case picker sends something before startDate
-    setEndDate(ts < startDate ? startDate : ts);
+    // Ensure check-out is at least 1 night after check-in
+    setEndDate(ts <= startDate ? startDate + ONE_DAY_MS : ts);
   };
 
   const resetForm = () => {
     const today = todayMidnight();
     setHotelName('');
     setBillNo('');
+    setComplaintNo('');
     setRatePerDayStr('');
     setFoodAmountStr('');
     setStartDate(today);
-    setEndDate(today);
+    setEndDate(today + ONE_DAY_MS);
   };
+
+  const visibleRecords = useMemo(
+    () => records.filter((item) => doesExpenseRangeOverlapPeriod(item.start_date, item.end_date, expensePeriod)),
+    [records, expensePeriod],
+  );
+  const oldestExpenseDate = useMemo(
+    () => records.length ? Math.min(...records.map((item) => item.start_date)) : undefined,
+    [records],
+  );
 
   const handleSave = async () => {
     if (!employee) {
@@ -130,6 +157,9 @@ export default function HotelScreen() {
       Alert.alert('Validation Error', vName.error);
       return;
     }
+
+    const vComplaint = validateRequiredText(complaintNo, 'Complaint No');
+    if (!vComplaint.isValid) { Alert.alert('Validation Error', vComplaint.error); return; }
 
     const days = derivedDays;
 
@@ -161,10 +191,11 @@ export default function HotelScreen() {
 
     try {
       setLoading(true);
-      await hotelRepository.create({
+      const created = await hotelRepository.create({
         employee_id: employee.id,
         hotel_name: hotelName.trim(),
         bill_no: billNo.trim() || null,
+        complaint_no: complaintNo.trim(),
         start_date: startDate,
         end_date: endDate,
         no_of_days: days,
@@ -173,9 +204,22 @@ export default function HotelScreen() {
         amount: totalAmountPaise,
       });
 
+      const attachmentFailures: string[] = [];
+      for (const attachment of attachmentDrafts) {
+        try {
+          await addExpenseAttachment('hotel', created.id, attachment);
+        } catch (error) {
+          attachmentFailures.push(`${attachment.name}: ${getExpenseAttachmentErrorMessage(error)}`);
+        }
+      }
+
       resetForm();
+      setAttachmentDrafts([]);
       setShowForm(false);
       await loadData();
+      if (attachmentFailures.length) {
+        Alert.alert('Hotel stay saved', `Expense saved. Attachment issue(s):\n${attachmentFailures.join('\n')}\n\nYou can retry from the attachment button on the saved entry.`);
+      }
     } catch (err) {
       console.error('Failed to save hotel expense:', err);
       Alert.alert('Error', 'Failed to save hotel expense.');
@@ -196,6 +240,7 @@ export default function HotelScreen() {
           onPress: async () => {
             try {
               await hotelRepository.delete(id);
+              await deleteExpenseAttachments('hotel', id);
               await loadData();
             } catch (err) {
               console.error('Failed to delete hotel expense:', err);
@@ -248,6 +293,14 @@ export default function HotelScreen() {
               </Text>
             </TouchableOpacity>
           </View>
+
+          <CompanyExpenseMonthFilter
+            period={expensePeriod}
+            onSelect={setExpensePeriod}
+            count={visibleRecords.length}
+            oldestDate={oldestExpenseDate}
+          />
+          <CompanyExpenseTotalCard title="Hotel Expenses" total={visibleRecords.reduce((sum, item) => sum + item.amount, 0)} count={visibleRecords.length} />
 
           {showForm && (
             <View
@@ -349,12 +402,7 @@ export default function HotelScreen() {
                   value={new Date(startDate)}
                   mode="date"
                   display={Platform.OS === 'ios' ? 'inline' : 'default'}
-                  onValueChange={(event, selectedDate) => {
-                    if (!selectedDate) return;
-                    const ts = normalizeToMidnight(selectedDate);
-                    setStartDate(ts);
-                    if (endDate < ts) setEndDate(ts);
-                  }}
+                  onChange={onStartDateChange}
                   onDismiss={() => setShowStartPicker(false)}
                   maximumDate={new Date()}
                 />
@@ -365,21 +413,16 @@ export default function HotelScreen() {
                   value={new Date(endDate)}
                   mode="date"
                   display={Platform.OS === 'ios' ? 'inline' : 'default'}
-                  onValueChange={(event, selectedDate) => {
-                    if (!selectedDate) return;
-                    const ts = normalizeToMidnight(selectedDate);
-                    setEndDate(ts < startDate ? startDate : ts);
-                  }}
+                  onChange={onEndDateChange}
                   onDismiss={() => setShowEndPicker(false)}
-                  minimumDate={new Date(startDate)}
-                  maximumDate={new Date()}
+                  minimumDate={new Date(startDate + ONE_DAY_MS)}
                 />
               )}
 
               <View style={styles.rowFields}>
                 <View style={[styles.fieldGroup, { flex: 1 }]}>
                   <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
-                    No. of Days
+                    No. of Nights
                   </Text>
                   <View
                     style={[
@@ -396,7 +439,7 @@ export default function HotelScreen() {
 
                 <View style={[styles.fieldGroup, { flex: 1 }]}>
                   <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
-                    Rate / Day (₹) *
+                    Rate / Night (₹) *
                   </Text>
                   <TextInput
                     style={[
@@ -410,6 +453,12 @@ export default function HotelScreen() {
                     onChangeText={setRatePerDayStr}
                   />
                 </View>
+              </View>
+
+              <View style={styles.fieldGroup}>
+                <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Complaint No *</Text>
+                <TextInput style={[styles.textInput, { backgroundColor: colors.surfaceVariant, color: colors.text }]} placeholder="Enter complaint number" placeholderTextColor={colors.textMuted} value={complaintNo} keyboardType="number-pad"
+                    onChangeText={(value) => setComplaintNo(value.replace(/\D/g, ''))} />
               </View>
 
               <View style={styles.fieldGroup}>
@@ -429,6 +478,12 @@ export default function HotelScreen() {
                 />
               </View>
 
+              <ExpenseAttachmentDrafts
+                value={attachmentDrafts}
+                onChange={setAttachmentDrafts}
+                disabled={loading}
+              />
+
               <TouchableOpacity
                 style={[
                   styles.submitBtn,
@@ -444,7 +499,7 @@ export default function HotelScreen() {
             </View>
           )}
 
-          {records.length === 0 ? (
+          {visibleRecords.length === 0 ? (
             <View
               style={[
                 styles.emptyCard,
@@ -453,11 +508,11 @@ export default function HotelScreen() {
             >
               <MaterialIcons name="hotel" size={40} color={colors.textMuted} />
               <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                No hotel stay records yet.
+                {records.length === 0 ? 'No hotel stay records yet.' : `No stays for ${formatPeriodLabel(expensePeriod)}.`}
               </Text>
             </View>
           ) : (
-            records.map((item) => (
+            visibleRecords.map((item) => (
               <View
                 key={item.id}
                 style={[
@@ -465,8 +520,9 @@ export default function HotelScreen() {
                   {
                     backgroundColor: colors.card,
                     borderColor: colors.border,
-                    borderRadius: borderRadius.md,
-                    ...shadows.sm,
+                    borderLeftColor: colors.primary,
+                    borderRadius: borderRadius.lg,
+                    ...shadows.md,
                   },
                 ]}
               >
@@ -476,8 +532,8 @@ export default function HotelScreen() {
                   </Text>
                   <Text style={[styles.recordMeta, { color: colors.textSecondary }]}>
                     {formatDate(item.start_date)} → {formatDate(item.end_date)} •{' '}
-                    {item.no_of_days} {item.no_of_days === 1 ? 'day' : 'days'} @{' '}
-                    {formatPaiseToRupees(item.rate_per_day)}/day
+                    Complaint: {item.complaint_no} • {item.no_of_days} {item.no_of_days === 1 ? 'night' : 'nights'} @{' '}
+                    {formatPaiseToRupees(item.rate_per_day)}/night
                     {item.food_amount
                       ? ` • Food: ${formatPaiseToRupees(item.food_amount)}`
                       : ''}
@@ -493,6 +549,10 @@ export default function HotelScreen() {
                   <Text style={[styles.recordAmount, { color: colors.text }]}>
                     {formatPaiseToRupees(item.amount)}
                   </Text>
+                  <ExpenseAttachmentStatusButton
+                    count={attachmentCounts[item.id] ?? 0}
+                    onPress={() => setAttachmentExpenseId(item.id)}
+                  />
                   <TouchableOpacity
                     onPress={() => handleDelete(item.id)}
                     style={styles.deleteBtn}
@@ -503,8 +563,15 @@ export default function HotelScreen() {
               </View>
             ))
           )}
-        </ScrollView>
+      </ScrollView>
       </KeyboardAvoidingView>
+      <CompanyExpenseAttachmentsModal
+        visible={attachmentExpenseId !== null}
+        expenseType="hotel"
+        expenseId={attachmentExpenseId ?? ''}
+        title="Hotel expense"
+        onClose={() => { setAttachmentExpenseId(null); void loadData(); }}
+      />
     </SafeAreaView>
   );
 }
@@ -566,18 +633,19 @@ const styles = StyleSheet.create({
   },
   emptyText: { marginTop: 8, fontSize: 13 },
   recordCard: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 14,
-    marginBottom: 10,
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    padding: 16,
+    marginBottom: 12,
     borderWidth: 1,
+    borderLeftWidth: 4,
+    gap: 12,
   },
-  recordMain: { flex: 1, paddingRight: 12 },
+  recordMain: { flex: 1 },
   recordParticulars: { fontSize: 14, fontWeight: '600', marginBottom: 2 },
   recordMeta: { fontSize: 12 },
   recordBill: { fontSize: 11, marginTop: 2 },
-  recordRight: { alignItems: 'flex-end', gap: 6 },
-  recordAmount: { fontSize: 15, fontWeight: '700' },
+  recordRight: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  recordAmount: { fontSize: 18, fontWeight: '800' },
   deleteBtn: { padding: 2 },
 });

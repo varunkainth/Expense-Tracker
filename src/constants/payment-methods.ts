@@ -31,6 +31,20 @@ export const PAYMENT_METHODS: PaymentMethodMeta[] = [
     bgColor: '#dbeafe',
   },
   {
+    key: 'ATM',
+    label: 'ATM',
+    icon: 'local-atm',
+    color: '#7c3aed',
+    bgColor: '#ede9fe',
+  },
+  {
+    key: 'Bank transfer',
+    label: 'Bank transfer',
+    icon: 'account-balance',
+    color: '#0f766e',
+    bgColor: '#ccfbf1',
+  },
+  {
     key: 'Other',
     label: 'Other',
     icon: 'account-balance-wallet',
@@ -39,4 +53,4 @@ export const PAYMENT_METHODS: PaymentMethodMeta[] = [
   },
 ];
 
-export const PAYMENT_METHOD_KEYS: PaymentMethod[] = ['UPI', 'Cash', 'Card', 'Other'];
+export const PAYMENT_METHOD_KEYS: PaymentMethod[] = ['UPI', 'Cash', 'Card', 'ATM', 'Bank transfer', 'Other'];

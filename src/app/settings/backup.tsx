@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View,
   Text,
@@ -9,17 +9,44 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 
 import { useTheme } from '../../hooks/useTheme';
 import {
   pickBackupFile,
   readBackupFile,
 } from '../../services/backup.service';
+import {
+  getLastSuccessfulBackup,
+} from '../../services/backup-status.service';
+import {
+  BACKUP_REMINDER_AFTER_DAYS,
+  BackupStatus,
+  isBackupOverdue,
+} from '../../services/backup-data';
 
 export default function BackupScreen() {
   const { colors, spacing, borderRadius, shadows } =
     useTheme();
+  const [backupStatus, setBackupStatus] = useState<BackupStatus | null>(null);
+  const [statusLoaded, setStatusLoaded] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      let isActive = true;
+      getLastSuccessfulBackup().then((status) => {
+        if (isActive) {
+          setBackupStatus(status);
+          setStatusLoaded(true);
+        }
+      });
+      return () => {
+        isActive = false;
+      };
+    }, []),
+  );
+
+  const backupOverdue = statusLoaded && isBackupOverdue(backupStatus);
 
   const handleCreateBackup = () => {
     router.push('/settings/backup-password');
@@ -121,6 +148,50 @@ const handleRestoreBackup = async () => {
           </Text>
         </View>
 
+        <View
+          style={[
+            styles.backupStatusCard,
+            {
+              backgroundColor: backupOverdue
+                ? `${colors.warning}12`
+                : colors.card,
+              borderColor: backupOverdue
+                ? colors.warning
+                : colors.border,
+              borderRadius: borderRadius.lg,
+            },
+          ]}
+        >
+          <MaterialIcons
+            name={backupOverdue ? 'backup' : 'verified-user'}
+            size={24}
+            color={backupOverdue ? colors.warning : colors.success}
+          />
+          <View style={styles.backupStatusText}>
+            <Text style={[styles.backupStatusTitle, { color: colors.text }]}>
+              {!statusLoaded
+                ? 'Checking backup status…'
+                : !backupStatus
+                  ? 'No backup saved yet'
+                  : backupOverdue
+                    ? 'Backup is due'
+                    : 'Backup is recent'}
+            </Text>
+            <Text style={[styles.backupStatusDesc, { color: colors.textSecondary }]}>
+              {!statusLoaded
+                ? 'Checking when this device last saved a backup.'
+                : !backupStatus
+                  ? 'Create an encrypted backup and save it somewhere separate from this phone.'
+                  : `${new Date(backupStatus.createdAt).toLocaleString()} · ${backupStatus.recordCount} records · ${backupStatus.attachmentCount} receipt attachments`}
+            </Text>
+            {backupStatus && backupOverdue && (
+              <Text style={[styles.backupOverdueHint, { color: colors.warning }]}>
+                It has been at least {BACKUP_REMINDER_AFTER_DAYS} days since the last successful backup.
+              </Text>
+            )}
+          </View>
+        </View>
+
         {/* Actions */}
         <View style={styles.actionsContainer}>
           {/* Create Backup */}
@@ -175,8 +246,8 @@ const handleRestoreBackup = async () => {
                   },
                 ]}
               >
-                Save a complete encrypted copy of all
-                personal and company records.
+                Save an encrypted copy of personal and company records,
+                including receipt images and PDF attachments.
               </Text>
             </View>
 
@@ -238,8 +309,8 @@ const handleRestoreBackup = async () => {
                   },
                 ]}
               >
-                Recover all expenses and employee data
-                from a saved backup file.
+                Recover expenses, employee data, and saved attachments
+                from a backup file.
               </Text>
             </View>
 
@@ -283,6 +354,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     lineHeight: 18,
   },
+
+  backupStatusCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    padding: 16,
+    borderWidth: 1,
+    marginBottom: 20,
+  },
+
+  backupStatusText: { flex: 1 },
+  backupStatusTitle: { fontSize: 15, fontWeight: '700', marginBottom: 4 },
+  backupStatusDesc: { fontSize: 12, lineHeight: 17 },
+  backupOverdueHint: { fontSize: 12, lineHeight: 17, marginTop: 5, fontWeight: '600' },
 
   actionsContainer: {
     gap: 14,

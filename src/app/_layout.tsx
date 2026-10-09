@@ -2,7 +2,6 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import {
-  ActivityIndicator,
   AppState,
   AppStateStatus,
   StyleSheet,
@@ -19,9 +18,7 @@ import { ThemeProvider, useTheme } from '../hooks/useTheme';
 import { AuthService } from '../services/auth.service';
 import { SecurityService } from '../services/security.service';
 
-import AnimatedSplash from '@/components/splash/AnimatedSplash';
-
-// Keep the native splash visible until our animated splash is ready.
+// Keep the native splash visible until the database is ready.
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 // ------------------------------------------------------------
@@ -29,10 +26,8 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
 // ------------------------------------------------------------
 function AppLockGuard({
   children,
-  onReady,
 }: {
   children: React.ReactNode;
-  onReady: () => void;
 }) {
   const [isLoading, setIsLoading] = useState(true);
   const [isLocked, setIsLocked] = useState(false);
@@ -64,10 +59,6 @@ function AppLockGuard({
   useEffect(() => {
     authenticate();
   }, [authenticate]);
-
-  useEffect(() => {
-    if (!isLoading) onReady();
-  }, [isLoading, onReady]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', async (nextState) => {
@@ -133,8 +124,8 @@ function AppContent({ onReady }: { onReady: () => void }) {
   const { colors, isDark } = useTheme();
 
   useEffect(() => {
-    if (error) onReady();
-  }, [error, onReady]);
+    if (isReady || error) onReady();
+  }, [isReady, error, onReady]);
 
   const alert = {
     visible: false,
@@ -167,7 +158,7 @@ function AppContent({ onReady }: { onReady: () => void }) {
     <>
       <StatusBar style={isDark ? 'light' : 'dark'} />
       <GestureHandlerRootView style={{ flex: 1 }}>
-        <AppLockGuard onReady={onReady}>
+        <AppLockGuard>
           <AppAlert
             visible={alert.visible}
             title={alert.title}
@@ -187,21 +178,16 @@ function AppContent({ onReady }: { onReady: () => void }) {
               contentStyle: { backgroundColor: colors.background },
             }}
           >
+            <Stack.Screen name="index" options={{ headerShown: false }} />
             <Stack.Screen
               name="(tabs)"
               options={{ headerShown: false, animation: 'fade' }}
             />
             <Stack.Screen
-              name="(personal)/quick-add"
-              options={{
-                presentation: 'modal',
-                animation: 'slide_from_bottom',
-                animationDuration: 260,
-                gestureEnabled: true,
-                title: 'Quick Add Expense',
-                headerTitleAlign: 'center',
-              }}
+              name="insights"
+              options={{ title: 'Spending Insights', animation: 'slide_from_right' }}
             />
+            <Stack.Screen name="settings/categories" options={{ title: 'Expense Categories', animation: 'slide_from_right' }} />
             <Stack.Screen
               name="(personal)/add-expense"
               options={{
@@ -212,10 +198,6 @@ function AppContent({ onReady }: { onReady: () => void }) {
                 title: 'Add Expense',
                 headerTitleAlign: 'center',
               }}
-            />
-            <Stack.Screen
-              name="(personal)/history"
-              options={{ title: 'Expense History', animation: 'slide_from_right' }}
             />
             <Stack.Screen
               name="(personal)/expense/[id]"
@@ -285,7 +267,7 @@ function AppContent({ onReady }: { onReady: () => void }) {
             />
             <Stack.Screen
               name="settings/data"
-              options={{ title: 'Export & Import', animation: 'slide_from_right' }}
+              options={{ title: 'Export', animation: 'slide_from_right' }}
             />
             <Stack.Screen name="crypto-test" options={{ title: 'Crypto Test' }} />
           </Stack>
@@ -296,24 +278,19 @@ function AppContent({ onReady }: { onReady: () => void }) {
 }
 
 // ------------------------------------------------------------
-// Root Layout — wraps everything with the Animated Splash overlay
+// Root Layout
 // ------------------------------------------------------------
 export default function RootLayout() {
-  const [appReady, setAppReady] = useState(false);
-  const [splashDone, setSplashDone] = useState(false);
-  const markAppReady = useCallback(() => setAppReady(true), []);
-  const finishSplash = useCallback(() => setSplashDone(true), []);
+  const markAppReady = useCallback(() => {
+    SplashScreen.hideAsync().catch((error) => {
+      console.error('Could not hide native splash screen:', error);
+    });
+  }, []);
 
   return (
     <SafeAreaProvider>
       <ThemeProvider>
         <AppContent onReady={markAppReady} />
-        {!splashDone && (
-          <AnimatedSplash
-            isReady={appReady}
-            onFinish={finishSplash}
-          />
-        )}
       </ThemeProvider>
     </SafeAreaProvider>
   );

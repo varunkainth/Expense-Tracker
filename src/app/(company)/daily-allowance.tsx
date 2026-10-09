@@ -14,12 +14,17 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { DateField, todayMidnight } from '../../components/datafield';
+import CompanyExpenseMonthFilter from '../../components/CompanyExpenseMonthFilter';
 import { useTheme } from '../../hooks/useTheme';
+import { formatPeriodLabel, getCurrentMonthPeriod, MonthPeriod } from '../../types/period';
+import { doesExpenseRangeOverlapPeriod } from '../../utils/company-expense-period';
 import { dailyAllowanceRepository } from '../../repositories/company/daily-allowance.repository';
 import { employeeRepository } from '../../repositories/company/employee.repository';
+import { DailyAllowanceRatesService } from '../../services/daily-allowance-rates.service';
 import {
   DAILY_ALLOWANCE_RATES,
   DailyAllowance,
+  DailyAllowanceRates,
   EmployeeDetails,
 } from '../../types/company';
 import { formatPaiseToRupees } from '../../utils/currency';
@@ -31,6 +36,8 @@ export default function DailyAllowanceScreen() {
 
   const [employee, setEmployee] = useState<EmployeeDetails | null>(null);
   const [records, setRecords] = useState<DailyAllowance[]>([]);
+  const [rates, setRates] = useState<DailyAllowanceRates>(DAILY_ALLOWANCE_RATES);
+  const [expensePeriod, setExpensePeriod] = useState<MonthPeriod>(getCurrentMonthPeriod);
   const [loading, setLoading] = useState(false);
 
   // Form state
@@ -44,13 +51,18 @@ export default function DailyAllowanceScreen() {
     return Number.isFinite(n) && n > 0 ? n : 0;
   }, [noOfDaysStr]);
 
-  const previewTravel = DAILY_ALLOWANCE_RATES.TRAVEL_ALLOWANCE_PAISE * noOfDays;
-  const previewFood = DAILY_ALLOWANCE_RATES.FOOD_ALLOWANCE_PAISE * noOfDays;
+  const previewTravel = rates.TRAVEL_ALLOWANCE_PAISE * noOfDays;
+  const previewFood = rates.FOOD_ALLOWANCE_PAISE * noOfDays;
   const previewTotal = previewTravel + previewFood;
 
   const loadData = useCallback(async () => {
     try {
-      const emps = await employeeRepository.getAll();
+      const [emps, loadedRates] = await Promise.all([
+        employeeRepository.getAll(),
+        DailyAllowanceRatesService.getRates(),
+      ]);
+      setRates(loadedRates);
+
       if (emps.length > 0) {
         setEmployee(emps[0]);
         const list = await dailyAllowanceRepository.getAll(emps[0].id);
@@ -77,6 +89,15 @@ export default function DailyAllowanceScreen() {
     setEndDate(today);
   };
 
+  const visibleRecords = useMemo(
+    () => records.filter((item) => doesExpenseRangeOverlapPeriod(item.start_date, item.end_date, expensePeriod)),
+    [records, expensePeriod],
+  );
+  const oldestExpenseDate = useMemo(
+    () => records.length ? Math.min(...records.map((item) => item.start_date)) : undefined,
+    [records],
+  );
+
   const handleSave = async () => {
     if (!employee) {
       Alert.alert('Employee Required', 'Please set up an employee profile first.', [
@@ -102,6 +123,9 @@ export default function DailyAllowanceScreen() {
         no_of_days: noOfDays,
         start_date: startDate,
         end_date: endDate,
+        travel_allowance: previewTravel,
+        food_allowance: previewFood,
+        total_amount: previewTotal,
       });
 
       resetForm();
@@ -116,6 +140,7 @@ export default function DailyAllowanceScreen() {
   };
 
   const handleDelete = (id: string) => {
+
     Alert.alert('Delete Record', 'Are you sure you want to delete this allowance record?', [
       { text: 'Cancel', style: 'cancel' },
       {
@@ -134,7 +159,7 @@ export default function DailyAllowanceScreen() {
     ]);
   };
 
-  const totalClaimedPaise = records.reduce((sum, item) => sum + item.total_amount, 0);
+  const totalClaimedPaise = visibleRecords.reduce((sum, item) => sum + item.total_amount, 0);
 
   return (
     <SafeAreaView edges={['bottom', 'left', 'right']} style={[styles.container, { backgroundColor: colors.background }]}>
@@ -146,6 +171,12 @@ export default function DailyAllowanceScreen() {
           contentContainerStyle={[styles.scrollContent, { padding: spacing.base }]}
           keyboardShouldPersistTaps="handled"
         >
+          <CompanyExpenseMonthFilter
+            period={expensePeriod}
+            onSelect={setExpensePeriod}
+            count={visibleRecords.length}
+            oldestDate={oldestExpenseDate}
+          />
           {/* Summary Card */}
           <View
             style={[
@@ -159,7 +190,7 @@ export default function DailyAllowanceScreen() {
           >
             <Text style={styles.summaryLabel}>Total Daily Allowance</Text>
             <Text style={styles.summaryAmount}>{formatPaiseToRupees(totalClaimedPaise)}</Text>
-            <Text style={styles.summarySub}>{records.length} {records.length === 1 ? 'entry' : 'entries'} recorded</Text>
+            <Text style={styles.summarySub}>{visibleRecords.length} {visibleRecords.length === 1 ? 'entry' : 'entries'} recorded</Text>
           </View>
 
           {/* Standard Rate Rule Card */}
@@ -174,29 +205,39 @@ export default function DailyAllowanceScreen() {
               },
             ]}
           >
-            <View style={styles.ruleRow}>
-              <MaterialIcons name="info-outline" size={20} color={colors.primary} />
-              <Text style={[styles.ruleTitle, { color: colors.text }]}>Company Defined Daily Rates</Text>
+            <View style={[styles.ruleRow, { justifyContent: 'space-between' }]}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <MaterialIcons name="info-outline" size={20} color={colors.primary} />
+                <Text style={[styles.ruleTitle, { color: colors.text }]}>Company Defined Daily Rates</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => router.push('/settings/daily-allowance-rates')}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}
+                activeOpacity={0.7}
+              >
+                <MaterialIcons name="edit" size={14} color={colors.primary} />
+                <Text style={{ fontSize: 12, fontWeight: '600', color: colors.primary }}>Edit</Text>
+              </TouchableOpacity>
             </View>
             <View style={styles.rateBreakdown}>
               <View style={styles.rateItem}>
                 <Text style={[styles.rateLabel, { color: colors.textSecondary }]}>Travel DA</Text>
                 <Text style={[styles.rateValue, { color: colors.text }]}>
-                  {formatPaiseToRupees(DAILY_ALLOWANCE_RATES.TRAVEL_ALLOWANCE_PAISE)}
+                  {formatPaiseToRupees(rates.TRAVEL_ALLOWANCE_PAISE)}
                 </Text>
               </View>
               <Text style={[styles.plusSymbol, { color: colors.textMuted }]}>+</Text>
               <View style={styles.rateItem}>
                 <Text style={[styles.rateLabel, { color: colors.textSecondary }]}>Food DA</Text>
                 <Text style={[styles.rateValue, { color: colors.text }]}>
-                  {formatPaiseToRupees(DAILY_ALLOWANCE_RATES.FOOD_ALLOWANCE_PAISE)}
+                  {formatPaiseToRupees(rates.FOOD_ALLOWANCE_PAISE)}
                 </Text>
               </View>
               <Text style={[styles.plusSymbol, { color: colors.textMuted }]}>=</Text>
               <View style={styles.rateItem}>
                 <Text style={[styles.rateLabel, { color: colors.textSecondary }]}>Total / Day</Text>
                 <Text style={[styles.rateValueTotal, { color: colors.success }]}>
-                  {formatPaiseToRupees(DAILY_ALLOWANCE_RATES.TOTAL_ALLOWANCE_PAISE)}
+                  {formatPaiseToRupees(rates.TOTAL_ALLOWANCE_PAISE)}
                 </Text>
               </View>
             </View>
@@ -262,7 +303,7 @@ export default function DailyAllowanceScreen() {
               <View style={[styles.previewBox, { backgroundColor: colors.surfaceVariant, borderRadius: borderRadius.md }]}>
                 <View style={styles.previewRow}>
                   <Text style={[styles.previewLabel, { color: colors.textSecondary }]}>
-                    Travel ({noOfDays} × {formatPaiseToRupees(DAILY_ALLOWANCE_RATES.TRAVEL_ALLOWANCE_PAISE)})
+                    Travel ({noOfDays} × {formatPaiseToRupees(rates.TRAVEL_ALLOWANCE_PAISE)})
                   </Text>
                   <Text style={[styles.previewValue, { color: colors.text }]}>
                     {formatPaiseToRupees(previewTravel)}
@@ -270,7 +311,7 @@ export default function DailyAllowanceScreen() {
                 </View>
                 <View style={styles.previewRow}>
                   <Text style={[styles.previewLabel, { color: colors.textSecondary }]}>
-                    Food ({noOfDays} × {formatPaiseToRupees(DAILY_ALLOWANCE_RATES.FOOD_ALLOWANCE_PAISE)})
+                    Food ({noOfDays} × {formatPaiseToRupees(rates.FOOD_ALLOWANCE_PAISE)})
                   </Text>
                   <Text style={[styles.previewValue, { color: colors.text }]}>
                     {formatPaiseToRupees(previewFood)}
@@ -284,6 +325,7 @@ export default function DailyAllowanceScreen() {
                 </View>
               </View>
 
+
               <TouchableOpacity
                 style={[styles.submitBtn, { backgroundColor: colors.primary, borderRadius: borderRadius.md }]}
                 onPress={handleSave}
@@ -295,15 +337,15 @@ export default function DailyAllowanceScreen() {
           )}
 
           {/* Records list */}
-          {records.length === 0 ? (
+          {visibleRecords.length === 0 ? (
             <View style={[styles.emptyCard, { backgroundColor: colors.card, borderRadius: borderRadius.md }]}>
               <MaterialIcons name="monetization-on" size={40} color={colors.textMuted} />
               <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                No daily allowances recorded yet.
+                {records.length === 0 ? 'No daily allowances recorded yet.' : `No allowances for ${formatPeriodLabel(expensePeriod)}.`}
               </Text>
             </View>
           ) : (
-            records.map((item) => (
+            visibleRecords.map((item) => (
               <View
                 key={item.id}
                 style={[

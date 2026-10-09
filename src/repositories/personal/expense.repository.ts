@@ -3,11 +3,10 @@ import {
   CreatePersonalExpenseDTO,
   PersonalExpense,
   PersonalExpenseWithCategory,
-  QuickAddExpenseDTO,
   UpdatePersonalExpenseDTO,
 } from '../../types/personal';
 import { generateUUID } from '../../utils/uuid';
-import { getCurrentTimestamp } from '../../utils/date';
+import { getCurrentTimestamp, isFutureDate } from '../../utils/date';
 
 export class PersonalExpenseRepository {
   /**
@@ -26,16 +25,19 @@ export class PersonalExpenseRepository {
         pe.id,
         pe.amount,
         pe.category_id,
+        pe.subcategory_id,
         pe.description,
         pe.payment_method,
         pe.expense_date,
         pe.created_at,
         pe.updated_at,
         c.name AS category_name,
-        c.icon AS category_icon
+        c.icon AS category_icon,
+        s.name AS subcategory_name
       FROM personal_expenses pe
       LEFT JOIN categories c
         ON pe.category_id = c.id
+      LEFT JOIN subcategories s ON pe.subcategory_id = s.id
       WHERE 1=1
     `;
 
@@ -83,16 +85,19 @@ export class PersonalExpenseRepository {
         pe.id,
         pe.amount,
         pe.category_id,
+        pe.subcategory_id,
         pe.description,
         pe.payment_method,
         pe.expense_date,
         pe.created_at,
         pe.updated_at,
         c.name AS category_name,
-        c.icon AS category_icon
+        c.icon AS category_icon,
+        s.name AS subcategory_name
       FROM personal_expenses pe
       LEFT JOIN categories c
         ON pe.category_id = c.id
+      LEFT JOIN subcategories s ON pe.subcategory_id = s.id
       WHERE pe.id = ?;
       `,
       [id],
@@ -113,6 +118,10 @@ export class PersonalExpenseRepository {
     const expenseDate =
       data.expense_date ?? timestamp;
 
+    if (isFutureDate(expenseDate, timestamp)) {
+      throw new Error('Personal expenses cannot be dated in the future.');
+    }
+
     const description =
       data.description ?? null;
 
@@ -122,18 +131,20 @@ export class PersonalExpenseRepository {
         id,
         amount,
         category_id,
+        subcategory_id,
         description,
         payment_method,
         expense_date,
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
       `,
       [
         id,
         data.amount,
         data.category_id,
+        data.subcategory_id ?? null,
         description,
         data.payment_method,
         expenseDate,
@@ -146,27 +157,13 @@ export class PersonalExpenseRepository {
       id,
       amount: data.amount,
       category_id: data.category_id,
+      subcategory_id: data.subcategory_id ?? null,
       description,
       payment_method: data.payment_method,
       expense_date: expenseDate,
       created_at: timestamp,
       updated_at: timestamp,
     };
-  }
-
-  /**
-   * Quick Add Expense.
-   */
-  async quickAddExpense(
-    data: QuickAddExpenseDTO,
-  ): Promise<PersonalExpense> {
-    return this.createExpense({
-      amount: data.amount,
-      category_id: data.category_id,
-      payment_method: data.payment_method,
-      description: null,
-      expense_date: getCurrentTimestamp(),
-    });
   }
 
   /**
@@ -208,12 +205,17 @@ export class PersonalExpenseRepository {
       data.expense_date ??
       existing.expense_date;
 
+    if (isFutureDate(updatedExpenseDate, updatedTimestamp)) {
+      throw new Error('Personal expenses cannot be dated in the future.');
+    }
+
     await db.runAsync(
       `
       UPDATE personal_expenses
       SET
         amount = ?,
         category_id = ?,
+        subcategory_id = ?,
         description = ?,
         payment_method = ?,
         expense_date = ?,
@@ -223,6 +225,7 @@ export class PersonalExpenseRepository {
       [
         updatedAmount,
         updatedCategoryId,
+        data.subcategory_id !== undefined ? data.subcategory_id : existing.subcategory_id,
         updatedDescription,
         updatedPaymentMethod,
         updatedExpenseDate,
@@ -235,6 +238,7 @@ export class PersonalExpenseRepository {
       id,
       amount: updatedAmount,
       category_id: updatedCategoryId,
+      subcategory_id: data.subcategory_id !== undefined ? data.subcategory_id : existing.subcategory_id,
       description: updatedDescription,
       payment_method: updatedPaymentMethod,
       expense_date: updatedExpenseDate,
@@ -264,6 +268,7 @@ export class PersonalExpenseRepository {
           id,
           amount,
           category_id,
+          subcategory_id,
           description,
           payment_method,
           expense_date,
@@ -314,6 +319,7 @@ export class PersonalExpenseRepository {
           id,
           amount,
           category_id,
+          subcategory_id,
           description,
           payment_method,
           expense_date,
@@ -338,18 +344,20 @@ export class PersonalExpenseRepository {
         id,
         amount,
         category_id,
+        subcategory_id,
         description,
         payment_method,
         expense_date,
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
       `,
       [
         expense.id,
         expense.amount,
         expense.category_id,
+        expense.subcategory_id,
         expense.description,
         expense.payment_method,
         expense.expense_date,

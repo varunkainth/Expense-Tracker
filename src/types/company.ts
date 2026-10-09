@@ -1,3 +1,9 @@
+export type CompanyExpenseAttachmentType =
+  | 'outstation_conveyance'
+  | 'hotel'
+  | 'tour_conveyance'
+  | 'miscellaneous_expense';
+
 // ------------------------------------------------------------
 // 1. Employee Details
 // ------------------------------------------------------------
@@ -79,6 +85,7 @@ export interface OutstationConveyance {
   amount: number; // in paise
   created_at: number;
   updated_at: number;
+  complaint_no: string;
 }
 
 export interface CreateOutstationConveyanceDTO {
@@ -90,6 +97,7 @@ export interface CreateOutstationConveyanceDTO {
   arrival_time?: number | null;
   mode: string;
   amount: number; // in paise
+  complaint_no: string;
 }
 
 export interface UpdateOutstationConveyanceDTO {
@@ -101,6 +109,7 @@ export interface UpdateOutstationConveyanceDTO {
   arrival_time?: number | null;
   mode?: string;
   amount?: number; // in paise
+  complaint_no?: string;
 }
 
 // ------------------------------------------------------------
@@ -119,6 +128,7 @@ export interface HotelExpense {
   amount: number; // in paise
   created_at: number;
   updated_at: number;
+  complaint_no: string;
 }
 
 export interface CreateHotelExpenseDTO {
@@ -131,6 +141,7 @@ export interface CreateHotelExpenseDTO {
   rate_per_day: number; // in paise
   food_amount?: number | null; // in paise
   amount: number; // in paise
+  complaint_no: string;
 }
 
 export interface UpdateHotelExpenseDTO {
@@ -143,6 +154,7 @@ export interface UpdateHotelExpenseDTO {
   rate_per_day?: number;
   food_amount?: number | null;
   amount?: number;
+  complaint_no?: string;
 }
 
 // ------------------------------------------------------------
@@ -158,6 +170,7 @@ export interface TourConveyance {
   fare: number; // in paise
   created_at: number;
   updated_at: number;
+  complaint_no: string;
 }
 
 export interface CreateTourConveyanceDTO {
@@ -167,6 +180,7 @@ export interface CreateTourConveyanceDTO {
   to_location: string;
   mode: string;
   fare: number; // in paise
+  complaint_no: string;
 }
 
 export interface UpdateTourConveyanceDTO {
@@ -176,6 +190,7 @@ export interface UpdateTourConveyanceDTO {
   to_location?: string;
   mode?: string;
   fare?: number;
+  complaint_no?: string;
 }
 
 // ------------------------------------------------------------
@@ -191,6 +206,7 @@ export interface PhoneExpense {
   amount: number; // in paise
   created_at: number;
   updated_at: number;
+  complaint_no: string;
 }
 
 export interface CreatePhoneExpenseDTO {
@@ -200,6 +216,7 @@ export interface CreatePhoneExpenseDTO {
   tel_fax_no: string;
   bill_no: string;
   amount: number; // in paise
+  complaint_no: string;
 }
 
 export interface UpdatePhoneExpenseDTO {
@@ -209,6 +226,7 @@ export interface UpdatePhoneExpenseDTO {
   tel_fax_no?: string;
   bill_no?: string;
   amount?: number;
+  complaint_no?: string;
 }
 
 // ------------------------------------------------------------
@@ -223,6 +241,7 @@ export interface MiscellaneousExpense {
   amount: number; // in paise
   created_at: number;
   updated_at: number;
+  complaint_no: string;
 }
 
 export interface CreateMiscellaneousExpenseDTO {
@@ -231,6 +250,7 @@ export interface CreateMiscellaneousExpenseDTO {
   particulars: string;
   bill_no: string;
   amount: number; // in paise
+  complaint_no: string;
 }
 
 export interface UpdateMiscellaneousExpenseDTO {
@@ -239,16 +259,23 @@ export interface UpdateMiscellaneousExpenseDTO {
   particulars?: string;
   bill_no?: string;
   amount?: number;
+  complaint_no?: string;
 }
 
 // ------------------------------------------------------------
 // 8. Daily Allowance
 // ------------------------------------------------------------
 
-export const DAILY_ALLOWANCE_RATES = {
-  TRAVEL_ALLOWANCE_PAISE: 37500, // ₹375
-  FOOD_ALLOWANCE_PAISE: 50000,   // ₹500
-  TOTAL_ALLOWANCE_PAISE: 87500,  // ₹875
+export interface DailyAllowanceRates {
+  TRAVEL_ALLOWANCE_PAISE: number;
+  FOOD_ALLOWANCE_PAISE: number;
+  TOTAL_ALLOWANCE_PAISE: number;
+}
+
+export const DAILY_ALLOWANCE_RATES: DailyAllowanceRates = {
+  TRAVEL_ALLOWANCE_PAISE: 40000, // ₹400
+  FOOD_ALLOWANCE_PAISE: 60000,   // ₹600
+  TOTAL_ALLOWANCE_PAISE: 100000, // ₹1,000
 } as const;
 
 export interface DailyAllowance {
@@ -257,8 +284,8 @@ export interface DailyAllowance {
   no_of_days: number;         // user-entered
   start_date: number;         // ms timestamp, midnight
   end_date: number;           // ms timestamp, midnight
-  travel_allowance: number;   // in paise = 37500 * no_of_days
-  food_allowance: number;     // in paise = 50000 * no_of_days
+  travel_allowance: number;   // in paise
+  food_allowance: number;     // in paise
   total_amount: number;       // in paise = travel_allowance + food_allowance
   created_at: number;
   updated_at: number;
@@ -269,9 +296,9 @@ export interface CreateDailyAllowanceDTO {
   no_of_days: number;
   start_date: number;
   end_date: number;
-  travel_allowance?: number;  // defaults to 37500 * no_of_days
-  food_allowance?: number;    // defaults to 50000 * no_of_days
-  total_amount?: number;      // defaults to travel + food
+  travel_allowance?: number;
+  food_allowance?: number;
+  total_amount?: number;
 }
 
 export interface UpdateDailyAllowanceDTO {

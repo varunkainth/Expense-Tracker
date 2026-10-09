@@ -1,7 +1,7 @@
 import { DateField, todayMidnight } from '@/components/datafield';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -15,6 +15,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../hooks/useTheme';
+import { formatPeriodLabel, getCurrentMonthPeriod, MonthPeriod } from '../../types/period';
+import { isDateInExpensePeriod } from '../../utils/company-expense-period';
+import CompanyExpenseTotalCard from '../../components/CompanyExpenseTotalCard';
+import CompanyExpenseMonthFilter from '../../components/CompanyExpenseMonthFilter';
 import { employeeRepository } from '../../repositories/company/employee.repository';
 import { localConveyanceRepository } from '../../repositories/company/local-conveyance.repository';
 import { EmployeeDetails, LocalConveyance } from '../../types/company';
@@ -28,6 +32,7 @@ export default function LocalConveyanceScreen() {
 
   const [employee, setEmployee] = useState<EmployeeDetails | null>(null);
   const [records, setRecords] = useState<LocalConveyance[]>([]);
+  const [expensePeriod, setExpensePeriod] = useState<MonthPeriod>(getCurrentMonthPeriod);
   const [showForm, setShowForm] = useState(false);
 
   // Form State
@@ -58,6 +63,15 @@ export default function LocalConveyanceScreen() {
     useCallback(() => {
       loadData();
     }, [loadData])
+  );
+
+  const visibleRecords = useMemo(
+    () => records.filter((item) => isDateInExpensePeriod(item.date, expensePeriod)),
+    [records, expensePeriod],
+  );
+  const oldestExpenseDate = useMemo(
+    () => records.length ? Math.min(...records.map((item) => item.date)) : undefined,
+    [records],
   );
 
   const handleSave = async () => {
@@ -159,6 +173,14 @@ export default function LocalConveyanceScreen() {
             </TouchableOpacity>
           </View>
 
+          <CompanyExpenseMonthFilter
+            period={expensePeriod}
+            onSelect={setExpensePeriod}
+            count={visibleRecords.length}
+            oldestDate={oldestExpenseDate}
+          />
+          <CompanyExpenseTotalCard title="Local Conveyance" total={visibleRecords.reduce((sum, item) => sum + item.amount, 0)} count={visibleRecords.length} />
+
           {showForm && (
             <View
               style={[
@@ -202,10 +224,11 @@ export default function LocalConveyanceScreen() {
                   <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Complaint No. *</Text>
                   <TextInput
                     style={[styles.textInput, { backgroundColor: colors.surfaceVariant, color: colors.text }]}
-                    placeholder="e.g. CMP-4029"
+                    placeholder="e.g. 4029"
                     placeholderTextColor={colors.textMuted}
                     value={complaintNo}
-                    onChangeText={setComplaintNo}
+                    keyboardType="number-pad"
+                    onChangeText={(value) => setComplaintNo(value.replace(/\D/g, ''))}
                   />
                 </View>
               </View>
@@ -232,13 +255,13 @@ export default function LocalConveyanceScreen() {
             </View>
           )}
 
-          {records.length === 0 ? (
+          {visibleRecords.length === 0 ? (
             <View style={[styles.emptyCard, { backgroundColor: colors.card, borderRadius: borderRadius.md }]}>
               <MaterialIcons name="two-wheeler" size={40} color={colors.textMuted} />
-              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No local conveyance records yet.</Text>
+              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>{records.length === 0 ? 'No local conveyance records yet.' : `No entries for ${formatPeriodLabel(expensePeriod)}.`}</Text>
             </View>
           ) : (
-            records.map((item) => (
+            visibleRecords.map((item) => (
               <View
                 key={item.id}
                 style={[

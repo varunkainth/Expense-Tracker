@@ -78,7 +78,7 @@ export const COMPANY_EXPENSE_TYPES: CompanyExpenseMeta[] = [
     key: 'daily_allowance',
     route: '/(company)/daily-allowance',
     label: 'Daily Allowance',
-    description: 'Standard outstation DA (₹375 travel + ₹500 food = ₹875/day)',
+    description: 'Standard outstation DA (travel + food allowance per day)',
     icon: 'monetization-on',
     color:   { light: '#4f46e5', dark: '#818cf8' },
     bgColor: { light: '#e0e7ff', dark: '#312e81' },

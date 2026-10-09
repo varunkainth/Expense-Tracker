@@ -50,18 +50,17 @@ export function validateHotelStay(
   ratePerDay: number,
   amount: number
 ): ValidationResult {
-  if (!Number.isFinite(noOfDays) || noOfDays <= 0) {
-    return { isValid: false, error: 'Number of days must be at least 1.' };
+  if (endDate <= startDate) {
+    return { isValid: false, error: 'Check-out date must be after check-in date (at least 1 night).' };
   }
-  if (endDate < startDate) {
-    return { isValid: false, error: 'Check-out date cannot be before check-in date.' };
+  if (!Number.isFinite(noOfDays) || noOfDays <= 0) {
+    return { isValid: false, error: 'Number of nights must be at least 1.' };
   }
   if (!Number.isFinite(ratePerDay) || ratePerDay <= 0) {
-    return { isValid: false, error: 'Rate per day must be greater than ₹0.' };
+    return { isValid: false, error: 'Rate per night must be greater than ₹0.' };
   }
   if (!Number.isFinite(amount) || amount <= 0) {
     return { isValid: false, error: 'Total hotel amount must be greater than ₹0.' };
   }
   return { isValid: true };
 }
-

@@ -13,6 +13,7 @@ export default function TabsLayout() {
 
   return (
     <Tabs
+      backBehavior="none"
       screenOptions={{
         headerShown: false,
         animation: 'fade',
@@ -26,7 +27,9 @@ export default function TabsLayout() {
 
         tabBarStyle: {
           backgroundColor: colors.tabBarBackground,
-          borderTopColor: colors.tabBarBorder,
+          borderTopWidth: 0,
+          elevation: 0,
+          shadowOpacity: 0,
 
           height:
             Platform.OS === 'ios'
@@ -78,6 +81,16 @@ export default function TabsLayout() {
               size={size}
               color={color}
             />
+          ),
+        }}
+      />
+
+      <Tabs.Screen
+        name="split"
+        options={{
+          title: 'Split',
+          tabBarIcon: ({ color, size }) => (
+            <MaterialIcons name="currency-exchange" size={size} color={color} />
           ),
         }}
       />

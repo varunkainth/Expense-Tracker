@@ -73,11 +73,14 @@ export default function BackupPasswordScreen() {
     try {
       setIsCreating(true);
 
-      await createAndSaveBackup(password);
+      const result = await createAndSaveBackup(password);
+      const attachmentLabel = result.summary.attachmentCount === 1
+        ? '1 receipt attachment'
+        : `${result.summary.attachmentCount} receipt attachments`;
 
       Alert.alert(
-        'Backup Ready',
-        'Your encrypted backup is ready to save.',
+        'Backup Created',
+        `The encrypted backup was saved with ${result.summary.recordCount} records and ${attachmentLabel}.`,
         [
           {
             text: 'Done',

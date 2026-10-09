@@ -9,6 +9,15 @@ export function getCurrentTimestamp(): number {
   return Date.now();
 }
 
+/** Returns true when the timestamp falls after today's local calendar day. */
+export function isFutureDate(timestamp: number, now = Date.now()): boolean {
+  const selected = new Date(timestamp);
+  const today = new Date(now);
+  selected.setHours(0, 0, 0, 0);
+  today.setHours(0, 0, 0, 0);
+  return selected.getTime() > today.getTime();
+}
+
 /**
  * Converts a Date object or ISO string to Unix timestamp in milliseconds.
  */

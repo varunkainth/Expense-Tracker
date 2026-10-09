@@ -1,17 +1,19 @@
+import { MaterialIcons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import React from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
   ScrollView,
+  StyleSheet,
+  Text,
   TouchableOpacity,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
-import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../../hooks/useTheme';
+import { useTabBackBehavior } from '../../hooks/useTabBackBehavior';
 
 export default function SettingsScreen() {
+  useTabBackBehavior();
   const { colors, spacing, borderRadius, shadows } = useTheme();
   const router = useRouter();
 
@@ -19,6 +21,14 @@ export default function SettingsScreen() {
     {
       title: 'Preferences',
       items: [
+        {
+          id: 'categories',
+          title: 'Expense Categories',
+          subtitle: 'Add or remove personal expense categories',
+          icon: 'category',
+          iconColor: '#f97316',
+          route: '/settings/categories',
+        },
         {
           id: 'appearance',
           title: 'Appearance',
@@ -35,6 +45,14 @@ export default function SettingsScreen() {
           iconColor: '#10b981',
           route: '/settings/security',
         },
+        {
+          id: 'daily_allowance_rates',
+          title: 'Daily Allowance Rates',
+          subtitle: 'Configure Travel and Food DA rates (₹400 / ₹600)',
+          icon: 'monetization-on',
+          iconColor: '#4f46e5',
+          route: '/settings/daily-allowance-rates',
+        },
       ],
     },
     {
@@ -50,7 +68,7 @@ export default function SettingsScreen() {
         },
         {
           id: 'data',
-          title: 'Export & Import',
+          title: 'Export',
           subtitle: 'Export expense data to portable formats',
           icon: 'import-export',
           iconColor: '#f59e0b',
@@ -59,6 +77,7 @@ export default function SettingsScreen() {
       ],
     },
   ];
+
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
@@ -111,7 +130,7 @@ export default function SettingsScreen() {
         {/* Version Note */}
         <View style={styles.versionContainer}>
           <Text style={[styles.versionText, { color: colors.textMuted }]}>
-            Payment App • V1.0.0 (Local-First)
+            Payment App • V1.5.0 (Beta) • Local-First
           </Text>
         </View>
       </ScrollView>

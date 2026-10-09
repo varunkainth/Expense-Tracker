@@ -43,6 +43,7 @@ bun run ios         # Build and launch on iOS
 bun run web         # Start the web target
 bunx tsc --noEmit   # Check TypeScript types
 bunx expo lint      # Run Expo lint (requires ESLint to be installed/configured)
+bun run test:regression # Run backup and monthly period regression checks
 ```
 
 ## Data and backups

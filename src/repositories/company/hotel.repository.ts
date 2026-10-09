@@ -8,7 +8,7 @@ export class HotelRepository {
     const db = await getDatabase();
     if (employeeId) {
       return await db.getAllAsync<HotelExpense>(
-        `SELECT id, employee_id, hotel_name, bill_no, start_date, end_date, no_of_days, rate_per_day, food_amount, amount, created_at, updated_at
+        `SELECT id, employee_id, hotel_name, bill_no, start_date, end_date, no_of_days, rate_per_day, food_amount, amount, complaint_no, created_at, updated_at
          FROM hotel
          WHERE employee_id = ?
          ORDER BY start_date DESC;`,
@@ -16,7 +16,7 @@ export class HotelRepository {
       );
     }
     return await db.getAllAsync<HotelExpense>(
-      `SELECT id, employee_id, hotel_name, bill_no, start_date, end_date, no_of_days, rate_per_day, food_amount, amount, created_at, updated_at
+      `SELECT id, employee_id, hotel_name, bill_no, start_date, end_date, no_of_days, rate_per_day, food_amount, amount, complaint_no, created_at, updated_at
        FROM hotel
        ORDER BY start_date DESC;`
     );
@@ -25,7 +25,7 @@ export class HotelRepository {
   async getById(id: string): Promise<HotelExpense | null> {
     const db = await getDatabase();
     return await db.getFirstAsync<HotelExpense>(
-      `SELECT id, employee_id, hotel_name, bill_no, start_date, end_date, no_of_days, rate_per_day, food_amount, amount, created_at, updated_at
+      `SELECT id, employee_id, hotel_name, bill_no, start_date, end_date, no_of_days, rate_per_day, food_amount, amount, complaint_no, created_at, updated_at
        FROM hotel
        WHERE id = ?;`,
       [id]
@@ -41,8 +41,8 @@ export class HotelRepository {
 
     await db.runAsync(
       `INSERT INTO hotel (
-        id, employee_id, hotel_name, bill_no, start_date, end_date, no_of_days, rate_per_day, food_amount, amount, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        id, employee_id, hotel_name, bill_no, start_date, end_date, no_of_days, rate_per_day, food_amount, amount, complaint_no, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
       [
         id,
         data.employee_id,
@@ -54,6 +54,7 @@ export class HotelRepository {
         data.rate_per_day,
         foodAmount,
         data.amount,
+        data.complaint_no,
         timestamp,
         timestamp,
       ]
@@ -70,6 +71,7 @@ export class HotelRepository {
       rate_per_day: data.rate_per_day,
       food_amount: foodAmount,
       amount: data.amount,
+      complaint_no: data.complaint_no,
       created_at: timestamp,
       updated_at: timestamp,
     };
@@ -83,6 +85,7 @@ export class HotelRepository {
     }
 
     const timestamp = getCurrentTimestamp();
+    const complaintNo = data.complaint_no ?? existing.complaint_no;
     const employeeId = data.employee_id ?? existing.employee_id;
     const hotelName = data.hotel_name ?? existing.hotel_name;
     const billNo = data.bill_no !== undefined ? data.bill_no : existing.bill_no;
@@ -95,7 +98,7 @@ export class HotelRepository {
 
     await db.runAsync(
       `UPDATE hotel
-       SET employee_id = ?, hotel_name = ?, bill_no = ?, start_date = ?, end_date = ?, no_of_days = ?, rate_per_day = ?, food_amount = ?, amount = ?, updated_at = ?
+       SET employee_id = ?, hotel_name = ?, bill_no = ?, start_date = ?, end_date = ?, no_of_days = ?, rate_per_day = ?, food_amount = ?, amount = ?, complaint_no = ?, updated_at = ?
        WHERE id = ?;`,
       [
         employeeId,
@@ -107,6 +110,7 @@ export class HotelRepository {
         ratePerDay,
         foodAmount,
         amount,
+        complaintNo,
         timestamp,
         id,
       ]
@@ -123,6 +127,7 @@ export class HotelRepository {
       rate_per_day: ratePerDay,
       food_amount: foodAmount,
       amount,
+      complaint_no: complaintNo,
       created_at: existing.created_at,
       updated_at: timestamp,
     };

@@ -1,8 +1,10 @@
 import * as SQLite from 'expo-sqlite';
 import { Migration } from '../types/database';
 import { seedDefaultCategories } from './seed';
+import { generateUUID } from '../utils/uuid';
+import { getCurrentTimestamp } from '../utils/date';
 
-export const CURRENT_SCHEMA_VERSION = 3;
+export const CURRENT_SCHEMA_VERSION = 7;
 
 export const MIGRATION_1_SQL = `
   -- 1. categories
@@ -248,6 +250,90 @@ export const MIGRATION_3_SQL = `
   ALTER TABLE employee_details ADD COLUMN mobile_no TEXT;
 `;
 
+export const MIGRATION_4_SQL = `
+  CREATE TABLE company_expense_attachments (
+    id TEXT PRIMARY KEY NOT NULL,
+    expense_type TEXT NOT NULL CHECK (expense_type IN (
+      'outstation_conveyance',
+      'hotel',
+      'tour_conveyance',
+      'miscellaneous_expense'
+    )),
+    expense_id TEXT NOT NULL,
+    file_name TEXT NOT NULL,
+    mime_type TEXT NOT NULL CHECK (mime_type IN ('image/jpeg', 'application/pdf')),
+    storage_name TEXT NOT NULL UNIQUE,
+    size_bytes INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE INDEX idx_company_expense_attachments_expense
+    ON company_expense_attachments(expense_type, expense_id, created_at);
+`;
+
+export const MIGRATION_5_SQL = `
+  ALTER TABLE outstation_conveyance ADD COLUMN complaint_no TEXT NOT NULL DEFAULT '';
+  ALTER TABLE hotel ADD COLUMN complaint_no TEXT NOT NULL DEFAULT '';
+  ALTER TABLE tour_conveyance ADD COLUMN complaint_no TEXT NOT NULL DEFAULT '';
+  ALTER TABLE phone_expense ADD COLUMN complaint_no TEXT NOT NULL DEFAULT '';
+  ALTER TABLE miscellaneous_expense ADD COLUMN complaint_no TEXT NOT NULL DEFAULT '';
+`;
+
+export const MIGRATION_6_SQL = `
+  CREATE TABLE subcategories (
+    id TEXT PRIMARY KEY NOT NULL,
+    category_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    is_default INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (category_id) REFERENCES categories(id)
+      ON DELETE CASCADE ON UPDATE CASCADE
+  );
+
+  CREATE UNIQUE INDEX idx_subcategories_category_name
+    ON subcategories(category_id, name COLLATE NOCASE);
+  CREATE INDEX idx_subcategories_category_id
+    ON subcategories(category_id);
+
+  ALTER TABLE personal_expenses ADD COLUMN subcategory_id TEXT
+    REFERENCES subcategories(id) ON DELETE SET NULL ON UPDATE CASCADE;
+`;
+
+export const MIGRATION_7_SQL = `
+  CREATE TABLE split_groups (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE split_people (
+    id TEXT PRIMARY KEY NOT NULL,
+    group_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (group_id) REFERENCES split_groups(id)
+      ON DELETE CASCADE ON UPDATE CASCADE
+  );
+  CREATE INDEX idx_split_people_group_id ON split_people(group_id);
+
+  CREATE TABLE split_expenses (
+    id TEXT PRIMARY KEY NOT NULL,
+    group_id TEXT NOT NULL,
+    description TEXT,
+    amount INTEGER NOT NULL,
+    paid_by_person_id TEXT NOT NULL,
+    expense_date INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (group_id) REFERENCES split_groups(id)
+      ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (paid_by_person_id) REFERENCES split_people(id)
+      ON DELETE CASCADE ON UPDATE CASCADE
+  );
+  CREATE INDEX idx_split_expenses_group_id ON split_expenses(group_id);
+  CREATE INDEX idx_split_expenses_payer ON split_expenses(paid_by_person_id);
+`;
+
 export const MIGRATIONS: Migration[] = [
   {
     version: 1,
@@ -270,7 +356,54 @@ export const MIGRATIONS: Migration[] = [
     up: async (db: SQLite.SQLiteDatabase) => {
       await db.execAsync(MIGRATION_3_SQL);
     },
-  }
+  },
+  {
+    version: 4,
+    description: 'Company expense attachments',
+    up: async (db: SQLite.SQLiteDatabase) => {
+      await db.execAsync(MIGRATION_4_SQL);
+    },
+  },
+  {
+    version: 5,
+    description: 'Company expenses: add complaint numbers',
+    up: async (db: SQLite.SQLiteDatabase) => {
+      await db.execAsync(MIGRATION_5_SQL);
+    },
+  },
+  {
+    version: 6,
+    description: 'Personal expense subcategories',
+    up: async (db: SQLite.SQLiteDatabase) => {
+      await db.execAsync(MIGRATION_6_SQL);
+      const defaults: Record<string, string[]> = {
+        Travel: ['Bus', 'Train', 'Flight', 'Cab', 'Uber', 'Ola', 'Rapido'],
+        Subscription: ['Netflix', 'Prime Video', 'Disney+ Hotstar', 'Spotify', 'YouTube Premium'],
+        Bills: ['Mobile Recharge', 'Electricity', 'Water', 'Credit Card Bill', 'Internet', 'Gas'],
+      };
+      const createdAt = getCurrentTimestamp();
+      for (const [categoryName, names] of Object.entries(defaults)) {
+        const category = await db.getFirstAsync<{ id: string }>(
+          'SELECT id FROM categories WHERE name = ?;',
+          [categoryName],
+        );
+        if (!category) continue;
+        for (const name of names) {
+          await db.runAsync(
+            'INSERT INTO subcategories (id, category_id, name, is_default, created_at) VALUES (?, ?, ?, 1, ?);',
+            [generateUUID(), category.id, name, createdAt],
+          );
+        }
+      }
+    },
+  },
+  {
+    version: 7,
+    description: 'Friends expense sharing and settlement groups',
+    up: async (db: SQLite.SQLiteDatabase) => {
+      await db.execAsync(MIGRATION_7_SQL);
+    },
+  },
 ];
 
 /**

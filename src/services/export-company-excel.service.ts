@@ -29,6 +29,7 @@ interface OutstationRow {
   to_location: string;
   arrival_time: number | null;
   mode: string;
+  complaint_no: string;
   amount: number;
 }
 
@@ -38,6 +39,7 @@ interface TourRow {
   from_location: string;
   to_location: string;
   mode: string;
+  complaint_no: string;
   fare: number;
 }
 
@@ -47,6 +49,7 @@ interface PhoneRow {
   particulars: string;
   tel_fax_no: string;
   bill_no: string;
+  complaint_no: string;
   amount: number;
 }
 
@@ -55,6 +58,7 @@ interface MiscRow {
   date: number;
   particulars: string;
   bill_no: string;
+  complaint_no: string;
   amount: number;
 }
 
@@ -72,6 +76,7 @@ interface HotelRow {
   id: string;
   hotel_name: string;
   bill_no: string | null;
+  complaint_no: string;
   start_date: number;
   end_date: number;
   no_of_days: number;
@@ -130,28 +135,28 @@ async function loadExportData(
   );
 
   const outstation = await db.getAllAsync<OutstationRow>(
-    `SELECT id, date, from_location, departure_time, to_location, arrival_time, mode, amount
+    `SELECT id, date, from_location, departure_time, to_location, arrival_time, mode, complaint_no, amount
      FROM outstation_conveyance WHERE employee_id = ? ${pointFilter}
      ORDER BY date ASC;`,
     pointArgs()
   );
 
   const tour = await db.getAllAsync<TourRow>(
-    `SELECT id, date, from_location, to_location, mode, fare
+    `SELECT id, date, from_location, to_location, mode, complaint_no, fare
      FROM tour_conveyance WHERE employee_id = ? ${pointFilter}
      ORDER BY date ASC;`,
     pointArgs()
   );
 
   const phone = await db.getAllAsync<PhoneRow>(
-    `SELECT id, date, particulars, tel_fax_no, bill_no, amount
+    `SELECT id, date, particulars, tel_fax_no, bill_no, complaint_no, amount
      FROM phone_expense WHERE employee_id = ? ${pointFilter}
      ORDER BY date ASC;`,
     pointArgs()
   );
 
   const misc = await db.getAllAsync<MiscRow>(
-    `SELECT id, date, particulars, bill_no, amount
+    `SELECT id, date, particulars, bill_no, complaint_no, amount
      FROM miscellaneous_expense WHERE employee_id = ? ${pointFilter}
      ORDER BY date ASC;`,
     pointArgs()
@@ -176,7 +181,7 @@ async function loadExportData(
   );
 
   const hotel = await db.getAllAsync<HotelRow>(
-    `SELECT id, hotel_name, bill_no, start_date, end_date, no_of_days, rate_per_day, food_amount, amount
+    `SELECT id, hotel_name, bill_no, complaint_no, start_date, end_date, no_of_days, rate_per_day, food_amount, amount
      FROM hotel WHERE employee_id = ? ${rangeFilter}
      ORDER BY start_date ASC;`,
     rangeArgs()
@@ -658,7 +663,7 @@ function buildOutstationSheet(data: ExportData): XLSX.WorkSheet {
   rows.push(['Details of Outstation Travel']);
 
   const travelHeaderIdx = rows.length;
-  rows.push(['Date', 'From', 'Dep. Time', '', 'To', 'Arr. Time', 'Mode', 'Amount']);
+  rows.push(['Date', 'From', 'Dep. Time', 'Complaint No', 'To', 'Arr. Time', 'Mode', 'Amount']);
 
   const travelDataStart = rows.length;
   const totalA = outstation.reduce((sum, r) => sum + r.amount, 0);
@@ -667,7 +672,7 @@ function buildOutstationSheet(data: ExportData): XLSX.WorkSheet {
       formatDateShort(r.date),
       r.from_location,
       formatTimeShort(r.departure_time),
-      '',
+      r.complaint_no,
       r.to_location,
       formatTimeShort(r.arrival_time),
       r.mode,
@@ -705,9 +710,12 @@ function buildOutstationSheet(data: ExportData): XLSX.WorkSheet {
         ? formatDateShort(r.start_date)
         : `${formatDateShort(r.start_date)} - ${formatDateShort(r.end_date)}`;
 
+    const foodUnitRate = r.no_of_days > 0 ? r.food_allowance / r.no_of_days : DAILY_ALLOWANCE_RATES.FOOD_ALLOWANCE_PAISE;
+    const travelUnitRate = r.no_of_days > 0 ? r.travel_allowance / r.no_of_days : DAILY_ALLOWANCE_RATES.TRAVEL_ALLOWANCE_PAISE;
+
     rows.push([
       'Food',
-      paiseToRupees(DAILY_ALLOWANCE_RATES.FOOD_ALLOWANCE_PAISE),
+      paiseToRupees(foodUnitRate),
       r.no_of_days,
       '',
       range,
@@ -717,7 +725,7 @@ function buildOutstationSheet(data: ExportData): XLSX.WorkSheet {
     ]);
     rows.push([
       'Travel',
-      paiseToRupees(DAILY_ALLOWANCE_RATES.TRAVEL_ALLOWANCE_PAISE),
+      paiseToRupees(travelUnitRate),
       r.no_of_days,
       '',
       range,
@@ -725,6 +733,7 @@ function buildOutstationSheet(data: ExportData): XLSX.WorkSheet {
       '',
       paiseToRupees(r.travel_allowance),
     ]);
+
   }
   const dailyBlanks = Math.max(MIN_BLANK_ROWS - dailyAllowance.length * 2, 0);
   for (let i = 0; i < dailyBlanks; ++i)
@@ -735,15 +744,15 @@ function buildOutstationSheet(data: ExportData): XLSX.WorkSheet {
   rows.push(['', '', '', '', '', '', 'Total', paiseToRupees(totalE)]);
 
   const hotelHeaderIdx = rows.length;
-  rows.push(['Hotel bills (F)', '', 'B.NO', 'DATE', 'NO FO DAYS STAY', 'RATE PER DAY', 'FOODS', 'AMOUNT']);
+  rows.push(['Hotel bills (F)', 'COMPLAINT NO', 'B.NO', 'DATE', 'NO. OF NIGHTS', 'RATE PER NIGHT', 'FOODS', 'AMOUNT']);
 
   const hotelStart = rows.length;
   for (const r of hotel) {
     rows.push([
       r.hotel_name,
-      '',
+      r.complaint_no,
       r.bill_no ?? '',
-      formatDateShort(r.start_date),
+      `${formatDateShort(r.start_date)} - ${formatDateShort(r.end_date)}`,
       r.no_of_days,
       paiseToRupees(r.rate_per_day),
       r.food_amount ? paiseToRupees(r.food_amount) : '',
@@ -895,7 +904,8 @@ function buildOutstationSheet(data: ExportData): XLSX.WorkSheet {
 // ------------------------------------------------------------
 function buildOutstationOtherSheet(data: ExportData): XLSX.WorkSheet {
   const { tour, phone, misc, period } = data;
-  const COLS = 5;
+  const COLS = 6;
+  const MISC_COLS = 5;
 
   const rows: (string | number)[][] = [];
 
@@ -906,7 +916,7 @@ function buildOutstationOtherSheet(data: ExportData): XLSX.WorkSheet {
   const tourTitleIdx = rows.length;
   rows.push(['LOCAL CONVEYANCE EXP']);
   const tourHeaderIdx = rows.length;
-  rows.push(['DATE', 'FROM', 'TO', 'MODE', 'FARE']);
+  rows.push(['DATE', 'FROM', 'TO', 'MODE', 'COMPLAINT NO', 'FARE']);
   const tourStart = rows.length;
   let tourTotal = 0;
   for (const r of tour) {
@@ -916,20 +926,21 @@ function buildOutstationOtherSheet(data: ExportData): XLSX.WorkSheet {
       r.from_location,
       r.to_location,
       r.mode,
+      r.complaint_no,
       paiseToRupees(r.fare),
     ]);
   }
   const tourBlanks = Math.max(MIN_BLANK_ROWS - tour.length, 0);
-  for (let i = 0; i < tourBlanks; ++i) rows.push(['', '', '', '', '']);
+  for (let i = 0; i < tourBlanks; ++i) rows.push(['', '', '', '', '', '']);
   const tourEnd = rows.length - 1;
   const tourTotalRowIdx = rows.length;
-  rows.push(['', '', '', 'Total', paiseToRupees(tourTotal)]);
+  rows.push(['', '', '', '', 'Total', paiseToRupees(tourTotal)]);
 
   // --- Telephone / Fax ---
   const phoneTitleIdx = rows.length;
   rows.push(['TELPHONE /FAX EXP']);
   const phoneHeaderIdx = rows.length;
-  rows.push(['DATE', 'PARTICLARS', 'TEL NO/FAX NO', 'B. NO', 'AMOUNT']);
+  rows.push(['DATE', 'PARTICLARS', 'TEL NO/FAX NO', 'B. NO', 'COMPLAINT NO', 'AMOUNT']);
   const phoneStart = rows.length;
   let phoneTotal = 0;
   for (const r of phone) {
@@ -939,20 +950,21 @@ function buildOutstationOtherSheet(data: ExportData): XLSX.WorkSheet {
       r.particulars,
       r.tel_fax_no,
       r.bill_no,
+      r.complaint_no,
       paiseToRupees(r.amount),
     ]);
   }
   const phoneBlanks = Math.max(MIN_BLANK_ROWS - phone.length, 0);
-  for (let i = 0; i < phoneBlanks; ++i) rows.push(['', '', '', '', '']);
+  for (let i = 0; i < phoneBlanks; ++i) rows.push(['', '', '', '', '', '']);
   const phoneEnd = rows.length - 1;
   const phoneTotalRowIdx = rows.length;
-  rows.push(['', '', '', 'Total', paiseToRupees(phoneTotal)]);
+  rows.push(['', '', '', '', 'Total', paiseToRupees(phoneTotal)]);
 
   // --- Other Exp ---
   const miscTitleIdx = rows.length;
   rows.push(['OTHER EXP']);
   const miscHeaderIdx = rows.length;
-  rows.push(['DATE', 'PARTICULAR', 'B. NO', 'DATE', 'AMOUNT']);
+  rows.push(['DATE', 'PARTICULAR', 'B. NO', 'COMPLAINT NO', 'AMOUNT']);
   const miscStart = rows.length;
   let miscTotal = 0;
   for (const r of misc) {
@@ -961,7 +973,7 @@ function buildOutstationOtherSheet(data: ExportData): XLSX.WorkSheet {
       formatDateShort(r.date),
       r.particulars,
       r.bill_no,
-      '',
+      r.complaint_no,
       paiseToRupees(r.amount),
     ]);
   }
@@ -981,8 +993,8 @@ function buildOutstationOtherSheet(data: ExportData): XLSX.WorkSheet {
   ensureRange(ws, tourTotalRowIdx, 0, tourTotalRowIdx, COLS - 1);
   ensureRange(ws, phoneHeaderIdx, 0, phoneEnd, COLS - 1);
   ensureRange(ws, phoneTotalRowIdx, 0, phoneTotalRowIdx, COLS - 1);
-  ensureRange(ws, miscHeaderIdx, 0, miscEnd, COLS - 1);
-  ensureRange(ws, miscTotalRowIdx, 0, miscTotalRowIdx, COLS - 1);
+  ensureRange(ws, miscHeaderIdx, 0, miscEnd, MISC_COLS - 1);
+  ensureRange(ws, miscTotalRowIdx, 0, miscTotalRowIdx, MISC_COLS - 1);
   ensureRange(ws, footerIdx, 0, footerIdx, COLS - 1);
 
   ws['!merges'] = [
@@ -1008,7 +1020,8 @@ function buildOutstationOtherSheet(data: ExportData): XLSX.WorkSheet {
     setStyle(ws, R, 1, STYLE_CELL);
     setStyle(ws, R, 2, STYLE_CELL);
     setStyle(ws, R, 3, STYLE_CELL_CENTER);
-    setStyle(ws, R, 4, STYLE_CELL_CURRENCY);
+    setStyle(ws, R, 4, STYLE_CELL_CENTER);
+    setStyle(ws, R, 5, STYLE_CELL_CURRENCY);
   }
   outlineRange(ws, tourHeaderIdx, 0, tourEnd, COLS - 1);
   applyTotalRow(ws, tourTotalRowIdx, COLS, 'Total');
@@ -1019,12 +1032,13 @@ function buildOutstationOtherSheet(data: ExportData): XLSX.WorkSheet {
     setStyle(ws, R, 1, STYLE_CELL);
     setStyle(ws, R, 2, STYLE_CELL_CENTER);
     setStyle(ws, R, 3, STYLE_CELL_CENTER);
-    setStyle(ws, R, 4, STYLE_CELL_CURRENCY);
+    setStyle(ws, R, 4, STYLE_CELL_CENTER);
+    setStyle(ws, R, 5, STYLE_CELL_CURRENCY);
   }
   outlineRange(ws, phoneHeaderIdx, 0, phoneEnd, COLS - 1);
   applyTotalRow(ws, phoneTotalRowIdx, COLS, 'Total');
 
-  setRangeStyle(ws, miscHeaderIdx, 0, miscHeaderIdx, COLS - 1, STYLE_HEADER);
+  setRangeStyle(ws, miscHeaderIdx, 0, miscHeaderIdx, MISC_COLS - 1, STYLE_HEADER);
   for (let R = miscStart; R <= miscEnd; ++R) {
     setStyle(ws, R, 0, STYLE_CELL_CENTER);
     setStyle(ws, R, 1, STYLE_CELL);
@@ -1032,8 +1046,8 @@ function buildOutstationOtherSheet(data: ExportData): XLSX.WorkSheet {
     setStyle(ws, R, 3, STYLE_CELL_CENTER);
     setStyle(ws, R, 4, STYLE_CELL_CURRENCY);
   }
-  outlineRange(ws, miscHeaderIdx, 0, miscEnd, COLS - 1);
-  applyTotalRow(ws, miscTotalRowIdx, COLS, 'Total');
+  outlineRange(ws, miscHeaderIdx, 0, miscEnd, MISC_COLS - 1);
+  applyTotalRow(ws, miscTotalRowIdx, MISC_COLS, 'Total');
 
   setRangeStyle(ws, footerIdx, 0, footerIdx, COLS - 1, {
     font: { bold: true },
@@ -1045,8 +1059,8 @@ function buildOutstationOtherSheet(data: ExportData): XLSX.WorkSheet {
 
   autoWidth(
     ws,
-    [12, 20, 18, 10, 12],
-    [20, 28, 22, 12, 16],
+    [12, 20, 18, 18, 18, 12],
+    [20, 28, 22, 22, 26, 18],
     new Set([footerIdx])
   );
 

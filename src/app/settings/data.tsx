@@ -1,6 +1,7 @@
 import { MaterialIcons } from '@expo/vector-icons';
 import * as Sharing from 'expo-sharing';
 import { useCallback, useState } from 'react';
+import { router } from 'expo-router';
 import {
   ActivityIndicator,
   Alert,
@@ -19,17 +20,16 @@ import { useTheme } from '../../hooks/useTheme';
 import { employeeRepository } from '../../repositories/company/employee.repository';
 import { buildAttendancePdf } from '../../services/export-attendance-pdf.service';
 import { buildCompanyExcel } from '../../services/export-company-excel.service';
+import { buildCompanyAttachmentsPdf } from '../../services/company-expense-attachments.service';
 import { MonthPeriod, formatPeriodLabel } from '../../types/period';
 
-type ExportKind = 'excel' | 'attendance';
+type ExportKind = 'excel' | 'attendance' | 'attachments';
 type Exporting = ExportKind | null;
-type PendingKind = ExportKind | null;
 
 export default function DataExportScreen() {
   const { colors, spacing, borderRadius, shadows } = useTheme();
   const [exporting, setExporting] = useState<Exporting>(null);
   const [pickerVisible, setPickerVisible] = useState(false);
-  const [pendingKind, setPendingKind] = useState<PendingKind>(null);
   const [extrasVisible, setExtrasVisible] = useState(false);
   const [period, setPeriod] = useState<MonthPeriod>(() => {
     const now = new Date();
@@ -45,7 +45,14 @@ export default function DataExportScreen() {
         setExporting('excel');
         const employees = await employeeRepository.getAll();
         if (employees.length === 0) {
-          Alert.alert('No Employee', 'Set up an employee profile before exporting.');
+          Alert.alert(
+            'Employee Profile Required',
+            'Add your work profile before exporting company expense reports.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Set Up Profile', onPress: () => router.push('/(company)/employee') },
+            ],
+          );
           return;
         }
         const employee = employees[0];
@@ -85,7 +92,14 @@ export default function DataExportScreen() {
         setExporting('attendance');
         const employees = await employeeRepository.getAll();
         if (employees.length === 0) {
-          Alert.alert('No Employee', 'Set up an employee profile before exporting.');
+          Alert.alert(
+            'Employee Profile Required',
+            'Add your work profile before exporting company expense reports.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Set Up Profile', onPress: () => router.push('/(company)/employee') },
+            ],
+          );
           return;
         }
         const result = await buildAttendancePdf(employees[0].id, period, extras);
@@ -112,32 +126,55 @@ export default function DataExportScreen() {
     [period]
   );
 
+  const handleAttachmentExport = useCallback(
+    async (selectedPeriod: MonthPeriod) => {
+      try {
+        setExporting('attachments');
+        const employees = await employeeRepository.getAll();
+        if (employees.length === 0) {
+          Alert.alert(
+            'Employee Profile Required',
+            'Add your work profile before exporting company receipt attachments.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Set Up Profile', onPress: () => router.push('/(company)/employee') },
+            ],
+          );
+          return;
+        }
+        const result = await buildCompanyAttachmentsPdf(employees[0].id, selectedPeriod);
+        const canShare = await Sharing.isAvailableAsync();
+        if (!canShare) {
+          Alert.alert('Sharing Unavailable', 'Sharing is not supported on this device.');
+          return;
+        }
+        await Sharing.shareAsync(result.uri, {
+          mimeType: 'application/pdf',
+          dialogTitle: 'Save Expense Receipts',
+          UTI: 'com.adobe.pdf',
+        });
+      } catch (err) {
+        Alert.alert(
+          'Receipt Export Failed',
+          err instanceof Error ? err.message : 'Something went wrong.'
+        );
+      } finally {
+        setExporting(null);
+      }
+    },
+    []
+  );
+
   // ------------------------------------------------------------
   // Picker flow
   // ------------------------------------------------------------
-  const onExportPressed = useCallback((kind: ExportKind) => {
-    setPendingKind(kind);
-    setPickerVisible(true);
-  }, []);
-
-  const onMonthSelected = useCallback(
-    (p: MonthPeriod) => {
-      setPeriod(p);
-      const kind = pendingKind;
-      setPendingKind(null);
-
-      if (kind === 'excel') {
-        setTimeout(() => handleExcelExport(p), 150);
-      } else if (kind === 'attendance') {
-        setTimeout(() => setExtrasVisible(true), 150);
-      }
-    },
-    [pendingKind, handleExcelExport]
-  );
-
   const onPickerClose = useCallback(() => {
     setPickerVisible(false);
-    setPendingKind(null);
+  }, []);
+
+  const onMonthSelected = useCallback((selectedPeriod: MonthPeriod) => {
+    setPeriod(selectedPeriod);
+    setPickerVisible(false);
   }, []);
 
   const onExtrasCancel = useCallback(() => {
@@ -155,13 +192,13 @@ export default function DataExportScreen() {
         contentContainerStyle={[styles.scrollContent, { padding: spacing.base }]}
       >
         <View style={styles.headerInfo}>
-          <MaterialIcons name="import-export" size={48} color={colors.primary} />
-          <Text style={[styles.headerTitle, { color: colors.text }]}>Data Export</Text>
+          <MaterialIcons name="file-download" size={48} color={colors.primary} />
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Export</Text>
           <Text style={[styles.headerDesc, { color: colors.textSecondary }]}>
-            Export company expense claims as an Excel workbook or a monthly
-            attendance form.
+            Export company claims, monthly attendance, and receipt attachments
+            for the month you select.
           </Text>
-          <View
+          <TouchableOpacity
             style={[
               styles.periodChip,
               {
@@ -170,12 +207,17 @@ export default function DataExportScreen() {
                 borderRadius: borderRadius.lg,
               },
             ]}
+            onPress={() => setPickerVisible(true)}
+            activeOpacity={0.75}
+            accessibilityRole="button"
+            accessibilityLabel={`Selected period: ${formatPeriodLabel(period)}. Tap to change.`}
           >
             <MaterialIcons name="event" size={14} color={colors.primary} />
             <Text style={[styles.periodChipText, { color: colors.primary }]}>
-              {formatPeriodLabel(period)}
+              {formatPeriodLabel(period)} · Change
             </Text>
-          </View>
+            <MaterialIcons name="expand-more" size={18} color={colors.primary} />
+          </TouchableOpacity>
         </View>
 
         <View style={styles.actionsContainer}>
@@ -191,7 +233,7 @@ export default function DataExportScreen() {
                 opacity: isBusy ? 0.6 : 1,
               },
             ]}
-            onPress={() => onExportPressed('excel')}
+            onPress={() => handleExcelExport(period)}
             disabled={isBusy}
             activeOpacity={0.8}
           >
@@ -207,8 +249,8 @@ export default function DataExportScreen() {
                 {exporting === 'excel' ? 'Generating Excel...' : 'Export as Excel (.xlsx)'}
               </Text>
               <Text style={[styles.actionDesc, { color: colors.textSecondary }]}>
-                Three sheets mirroring the claim form — same sections, same totals,
-                editable in Excel.
+                Selected-month claim workbook for conveyance, travel, hotel, daily allowance,
+                phone/fax, and other expenses, with complaint numbers and totals.
               </Text>
             </View>
           </TouchableOpacity>
@@ -225,7 +267,7 @@ export default function DataExportScreen() {
                 opacity: isBusy ? 0.6 : 1,
               },
             ]}
-            onPress={() => onExportPressed('attendance')}
+            onPress={() => setExtrasVisible(true)}
             disabled={isBusy}
             activeOpacity={0.8}
           >
@@ -241,8 +283,41 @@ export default function DataExportScreen() {
                 {exporting === 'attendance' ? 'Generating...' : 'Export Attendance Form'}
               </Text>
               <Text style={[styles.actionDesc, { color: colors.textSecondary }]}>
-                Monthly one-page attendance + expense summary with Sundays, holidays,
-                and absences.
+                Monthly attendance and expense totals, with Sundays, holidays, absences,
+                and your Saturday-off rule.
+              </Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* Expense receipts */}
+          <TouchableOpacity
+            style={[
+              styles.actionCard,
+              {
+                backgroundColor: colors.card,
+                borderColor: colors.border,
+                borderRadius: borderRadius.lg,
+                ...shadows.sm,
+                opacity: isBusy ? 0.6 : 1,
+              },
+            ]}
+            onPress={() => handleAttachmentExport(period)}
+            disabled={isBusy}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.iconCircle, { backgroundColor: '#f9731620' }]}>
+              {exporting === 'attachments' ? (
+                <ActivityIndicator color="#f97316" />
+              ) : (
+                <MaterialIcons name="receipt-long" size={24} color="#f97316" />
+              )}
+            </View>
+            <View style={styles.actionTextContainer}>
+              <Text style={[styles.actionTitle, { color: colors.text }]}>
+                {exporting === 'attachments' ? 'Generating receipt PDF...' : 'Export Expense Attachments'}
+              </Text>
+              <Text style={[styles.actionDesc, { color: colors.textSecondary }]}>
+                Combine receipt photos and PDFs linked to company expenses in the selected month.
               </Text>
             </View>
           </TouchableOpacity>
@@ -252,7 +327,7 @@ export default function DataExportScreen() {
       <MonthPickerModal
         visible={pickerVisible}
         selected={period}
-        includeAllTime
+        includeAllTime={false}
         onSelect={onMonthSelected}
         onClose={onPickerClose}
       />

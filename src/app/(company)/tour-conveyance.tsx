@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -14,6 +14,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../../hooks/useTheme';
+import { formatPeriodLabel, getCurrentMonthPeriod, MonthPeriod } from '../../types/period';
+import { isDateInExpensePeriod } from '../../utils/company-expense-period';
+import CompanyExpenseTotalCard from '../../components/CompanyExpenseTotalCard';
+import CompanyExpenseMonthFilter from '../../components/CompanyExpenseMonthFilter';
 import { tourConveyanceRepository } from '../../repositories/company/tour-conveyance.repository';
 import { employeeRepository } from '../../repositories/company/employee.repository';
 import { EmployeeDetails, TourConveyance } from '../../types/company';
@@ -21,6 +25,10 @@ import { formatPaiseToRupees, rupeesToPaise } from '../../utils/currency';
 import { formatDate } from '../../utils/date';
 import { validateAmount, validateRequiredText } from '../../utils/validation';
 import { DateField, todayMidnight } from '../../components/datafield';
+import CompanyExpenseAttachmentsModal from '../../components/CompanyExpenseAttachmentsModal';
+import ExpenseAttachmentStatusButton from '../../components/ExpenseAttachmentStatusButton';
+import ExpenseAttachmentDrafts from '../../components/ExpenseAttachmentDrafts';
+import { addExpenseAttachment, deleteExpenseAttachments, getExpenseAttachmentCounts, getExpenseAttachmentErrorMessage, PickedExpenseAttachment } from '../../services/company-expense-attachments.service';
 
 export default function TourConveyanceScreen() {
   const { colors, spacing, borderRadius, shadows } = useTheme();
@@ -28,13 +36,18 @@ export default function TourConveyanceScreen() {
 
   const [employee, setEmployee] = useState<EmployeeDetails | null>(null);
   const [records, setRecords] = useState<TourConveyance[]>([]);
+  const [expensePeriod, setExpensePeriod] = useState<MonthPeriod>(getCurrentMonthPeriod);
+  const [attachmentCounts, setAttachmentCounts] = useState<Record<string, number>>({});
   const [showForm, setShowForm] = useState(false);
+  const [attachmentExpenseId, setAttachmentExpenseId] = useState<string | null>(null);
+  const [attachmentDrafts, setAttachmentDrafts] = useState<PickedExpenseAttachment[]>([]);
 
   // Form State
   const [date, setDate] = useState<number>(todayMidnight);
   const [fromLocation, setFromLocation] = useState('');
   const [toLocation, setToLocation] = useState('');
   const [mode, setMode] = useState('Cab');
+  const [complaintNo, setComplaintNo] = useState('');
   const [fareStr, setFareStr] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -45,6 +58,7 @@ export default function TourConveyanceScreen() {
         setEmployee(emps[0]);
         const list = await tourConveyanceRepository.getAll(emps[0].id);
         setRecords(list);
+        setAttachmentCounts(await getExpenseAttachmentCounts('tour_conveyance', list.map((item) => item.id)));
       } else {
         setEmployee(null);
         setRecords([]);
@@ -58,6 +72,15 @@ export default function TourConveyanceScreen() {
     useCallback(() => {
       loadData();
     }, [loadData])
+  );
+
+  const visibleRecords = useMemo(
+    () => records.filter((item) => isDateInExpensePeriod(item.date, expensePeriod)),
+    [records, expensePeriod],
+  );
+  const oldestExpenseDate = useMemo(
+    () => records.length ? Math.min(...records.map((item) => item.date)) : undefined,
+    [records],
   );
 
   const handleSave = async () => {
@@ -80,6 +103,9 @@ export default function TourConveyanceScreen() {
       return;
     }
 
+    const vComplaint = validateRequiredText(complaintNo, 'Complaint No');
+    if (!vComplaint.isValid) { Alert.alert('Validation Error', vComplaint.error); return; }
+
     if (!fareStr || parseFloat(fareStr) <= 0) {
       Alert.alert('Validation Error', 'Please enter a valid fare.');
       return;
@@ -94,21 +120,36 @@ export default function TourConveyanceScreen() {
         return;
       }
 
-      await tourConveyanceRepository.create({
+      const created = await tourConveyanceRepository.create({
         employee_id: employee.id,
         date,
         from_location: fromLocation.trim(),
         to_location: toLocation.trim(),
         mode: mode.trim(),
+        complaint_no: complaintNo.trim(),
         fare: farePaise,
       });
 
+      const attachmentFailures: string[] = [];
+      for (const attachment of attachmentDrafts) {
+        try {
+          await addExpenseAttachment('tour_conveyance', created.id, attachment);
+        } catch (error) {
+          attachmentFailures.push(`${attachment.name}: ${getExpenseAttachmentErrorMessage(error)}`);
+        }
+      }
+
       setFromLocation('');
       setToLocation('');
+      setComplaintNo('');
       setFareStr('');
       setDate(todayMidnight());
+      setAttachmentDrafts([]);
       setShowForm(false);
       await loadData();
+      if (attachmentFailures.length) {
+        Alert.alert('Tour entry saved', `Expense saved. Attachment issue(s):\n${attachmentFailures.join('\n')}\n\nYou can retry from the attachment button on the saved entry.`);
+      }
     } catch (err) {
       console.error('Failed to save tour conveyance:', err);
       Alert.alert('Error', 'Failed to save record.');
@@ -126,6 +167,7 @@ export default function TourConveyanceScreen() {
         onPress: async () => {
           try {
             await tourConveyanceRepository.delete(id);
+            await deleteExpenseAttachments('tour_conveyance', id);
             await loadData();
           } catch (err) {
             console.error('Failed to delete tour conveyance:', err);
@@ -158,6 +200,14 @@ export default function TourConveyanceScreen() {
               </Text>
             </TouchableOpacity>
           </View>
+
+          <CompanyExpenseMonthFilter
+            period={expensePeriod}
+            onSelect={setExpensePeriod}
+            count={visibleRecords.length}
+            oldestDate={oldestExpenseDate}
+          />
+          <CompanyExpenseTotalCard title="Tour Conveyance" total={visibleRecords.reduce((sum, item) => sum + item.fare, 0)} count={visibleRecords.length} />
 
           {showForm && (
             <View
@@ -211,6 +261,12 @@ export default function TourConveyanceScreen() {
               </View>
 
               <View style={styles.fieldGroup}>
+                <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Complaint No *</Text>
+                <TextInput style={[styles.textInput, { backgroundColor: colors.surfaceVariant, color: colors.text }]} placeholder="Enter complaint number" placeholderTextColor={colors.textMuted} value={complaintNo} keyboardType="number-pad"
+                    onChangeText={(value) => setComplaintNo(value.replace(/\D/g, ''))} />
+              </View>
+
+              <View style={styles.fieldGroup}>
                 <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Fare (₹) *</Text>
                 <TextInput
                   style={[styles.textInput, { backgroundColor: colors.surfaceVariant, color: colors.text, fontSize: 18, fontWeight: '700' }]}
@@ -222,6 +278,12 @@ export default function TourConveyanceScreen() {
                 />
               </View>
 
+              <ExpenseAttachmentDrafts
+                value={attachmentDrafts}
+                onChange={setAttachmentDrafts}
+                disabled={loading}
+              />
+
               <TouchableOpacity
                 style={[styles.submitBtn, { backgroundColor: colors.primary, borderRadius: borderRadius.md }]}
                 onPress={handleSave}
@@ -232,18 +294,18 @@ export default function TourConveyanceScreen() {
             </View>
           )}
 
-          {records.length === 0 ? (
+          {visibleRecords.length === 0 ? (
             <View style={[styles.emptyCard, { backgroundColor: colors.card, borderRadius: borderRadius.md }]}>
               <MaterialIcons name="commute" size={40} color={colors.textMuted} />
-              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No tour conveyance records yet.</Text>
+              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>{records.length === 0 ? 'No tour conveyance records yet.' : `No entries for ${formatPeriodLabel(expensePeriod)}.`}</Text>
             </View>
           ) : (
-            records.map((item) => (
+            visibleRecords.map((item) => (
               <View
                 key={item.id}
                 style={[
                   styles.recordCard,
-                  { backgroundColor: colors.card, borderColor: colors.border, borderRadius: borderRadius.md, ...shadows.sm },
+                  { backgroundColor: colors.card, borderColor: colors.border, borderLeftColor: colors.primary, borderRadius: borderRadius.lg, ...shadows.md },
                 ]}
               >
                 <View style={styles.recordMain}>
@@ -251,12 +313,16 @@ export default function TourConveyanceScreen() {
                     {item.from_location} → {item.to_location}
                   </Text>
                   <Text style={[styles.recordMeta, { color: colors.textSecondary }]}>
-                    {formatDate(item.date)} • {item.mode}
+                    {formatDate(item.date)} • {item.mode} • Complaint: {item.complaint_no}
                   </Text>
                 </View>
 
                 <View style={styles.recordRight}>
                   <Text style={[styles.recordAmount, { color: colors.text }]}>{formatPaiseToRupees(item.fare)}</Text>
+                  <ExpenseAttachmentStatusButton
+                    count={attachmentCounts[item.id] ?? 0}
+                    onPress={() => setAttachmentExpenseId(item.id)}
+                  />
                   <TouchableOpacity onPress={() => handleDelete(item.id)} style={styles.deleteBtn}>
                     <MaterialIcons name="delete-outline" size={20} color={colors.danger} />
                   </TouchableOpacity>
@@ -264,8 +330,15 @@ export default function TourConveyanceScreen() {
               </View>
             ))
           )}
-        </ScrollView>
+      </ScrollView>
       </KeyboardAvoidingView>
+      <CompanyExpenseAttachmentsModal
+        visible={attachmentExpenseId !== null}
+        expenseType="tour_conveyance"
+        expenseId={attachmentExpenseId ?? ''}
+        title="Tour conveyance"
+        onClose={() => { setAttachmentExpenseId(null); void loadData(); }}
+      />
     </SafeAreaView>
   );
 }
@@ -316,17 +389,18 @@ const styles = StyleSheet.create({
   },
   emptyText: { marginTop: 8, fontSize: 13 },
   recordCard: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 14,
-    marginBottom: 10,
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    padding: 16,
+    marginBottom: 12,
     borderWidth: 1,
+    borderLeftWidth: 4,
+    gap: 12,
   },
-  recordMain: { flex: 1, paddingRight: 12 },
+  recordMain: { flex: 1 },
   recordParticulars: { fontSize: 14, fontWeight: '600', marginBottom: 2 },
   recordMeta: { fontSize: 12 },
-  recordRight: { alignItems: 'flex-end', gap: 6 },
-  recordAmount: { fontSize: 15, fontWeight: '700' },
+  recordRight: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  recordAmount: { fontSize: 18, fontWeight: '800' },
   deleteBtn: { padding: 2 },
 });

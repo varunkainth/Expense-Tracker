@@ -12,7 +12,7 @@ export class MiscellaneousRepository {
     const db = await getDatabase();
     if (employeeId) {
       return await db.getAllAsync<MiscellaneousExpense>(
-        `SELECT id, employee_id, date, particulars, bill_no, amount, created_at, updated_at
+        `SELECT id, employee_id, date, particulars, bill_no, amount, complaint_no, created_at, updated_at
          FROM miscellaneous_expense
          WHERE employee_id = ?
          ORDER BY date DESC;`,
@@ -20,7 +20,7 @@ export class MiscellaneousRepository {
       );
     }
     return await db.getAllAsync<MiscellaneousExpense>(
-      `SELECT id, employee_id, date, particulars, bill_no, amount, created_at, updated_at
+      `SELECT id, employee_id, date, particulars, bill_no, amount, complaint_no, created_at, updated_at
        FROM miscellaneous_expense
        ORDER BY date DESC;`
     );
@@ -29,7 +29,7 @@ export class MiscellaneousRepository {
   async getById(id: string): Promise<MiscellaneousExpense | null> {
     const db = await getDatabase();
     return await db.getFirstAsync<MiscellaneousExpense>(
-      `SELECT id, employee_id, date, particulars, bill_no, amount, created_at, updated_at
+      `SELECT id, employee_id, date, particulars, bill_no, amount, complaint_no, created_at, updated_at
        FROM miscellaneous_expense
        WHERE id = ?;`,
       [id]
@@ -43,8 +43,8 @@ export class MiscellaneousRepository {
 
     await db.runAsync(
       `INSERT INTO miscellaneous_expense (
-        id, employee_id, date, particulars, bill_no, amount, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
+        id, employee_id, date, particulars, bill_no, amount, complaint_no, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
       [
         id,
         data.employee_id,
@@ -52,6 +52,7 @@ export class MiscellaneousRepository {
         data.particulars,
         data.bill_no,
         data.amount,
+        data.complaint_no,
         timestamp,
         timestamp,
       ]
@@ -64,6 +65,7 @@ export class MiscellaneousRepository {
       particulars: data.particulars,
       bill_no: data.bill_no,
       amount: data.amount,
+      complaint_no: data.complaint_no,
       created_at: timestamp,
       updated_at: timestamp,
     };
@@ -77,6 +79,7 @@ export class MiscellaneousRepository {
     }
 
     const timestamp = getCurrentTimestamp();
+    const complaintNo = data.complaint_no ?? existing.complaint_no;
     const employeeId = data.employee_id ?? existing.employee_id;
     const date = data.date ?? existing.date;
     const particulars = data.particulars ?? existing.particulars;
@@ -85,9 +88,9 @@ export class MiscellaneousRepository {
 
     await db.runAsync(
       `UPDATE miscellaneous_expense
-       SET employee_id = ?, date = ?, particulars = ?, bill_no = ?, amount = ?, updated_at = ?
+       SET employee_id = ?, date = ?, particulars = ?, bill_no = ?, amount = ?, complaint_no = ?, updated_at = ?
        WHERE id = ?;`,
-      [employeeId, date, particulars, billNo, amount, timestamp, id]
+      [employeeId, date, particulars, billNo, amount, complaintNo, timestamp, id]
     );
 
     return {
@@ -97,6 +100,7 @@ export class MiscellaneousRepository {
       particulars,
       bill_no: billNo,
       amount,
+      complaint_no: complaintNo,
       created_at: existing.created_at,
       updated_at: timestamp,
     };

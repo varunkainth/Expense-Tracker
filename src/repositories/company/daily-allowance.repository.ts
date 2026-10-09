@@ -1,19 +1,22 @@
 import { getDatabase } from '../../database/client';
+import { DailyAllowanceRatesService } from '../../services/daily-allowance-rates.service';
 import {
   CreateDailyAllowanceDTO,
-  DAILY_ALLOWANCE_RATES,
   DailyAllowance,
+  DailyAllowanceRates,
   UpdateDailyAllowanceDTO,
 } from '../../types/company';
 import { getCurrentTimestamp } from '../../utils/date';
 import { generateUUID } from '../../utils/uuid';
 
-function computeAllowances(noOfDays: number) {
-  const travelAllowance = DAILY_ALLOWANCE_RATES.TRAVEL_ALLOWANCE_PAISE * noOfDays;
-  const foodAllowance = DAILY_ALLOWANCE_RATES.FOOD_ALLOWANCE_PAISE * noOfDays;
+async function computeAllowances(noOfDays: number, customRates?: DailyAllowanceRates) {
+  const rates = customRates ?? (await DailyAllowanceRatesService.getRates());
+  const travelAllowance = rates.TRAVEL_ALLOWANCE_PAISE * noOfDays;
+  const foodAllowance = rates.FOOD_ALLOWANCE_PAISE * noOfDays;
   const totalAmount = travelAllowance + foodAllowance;
   return { travelAllowance, foodAllowance, totalAmount };
 }
+
 
 export class DailyAllowanceRepository {
   async getAll(employeeId?: string): Promise<DailyAllowance[]> {
@@ -59,7 +62,7 @@ export class DailyAllowanceRepository {
       throw new Error('no_of_days must be a positive number.');
     }
 
-    const computed = computeAllowances(data.no_of_days);
+    const computed = await computeAllowances(data.no_of_days);
     const travelAllowance = data.travel_allowance ?? computed.travelAllowance;
     const foodAllowance = data.food_allowance ?? computed.foodAllowance;
     const totalAmount = data.total_amount ?? (travelAllowance + foodAllowance);
@@ -117,11 +120,12 @@ export class DailyAllowanceRepository {
     let totalAmount = data.total_amount ?? existing.total_amount;
 
     if (data.no_of_days !== undefined) {
-      const computed = computeAllowances(noOfDays);
+      const computed = await computeAllowances(noOfDays);
       if (data.travel_allowance === undefined) travelAllowance = computed.travelAllowance;
       if (data.food_allowance === undefined) foodAllowance = computed.foodAllowance;
       if (data.total_amount === undefined) totalAmount = travelAllowance + foodAllowance;
     }
+
 
     await db.runAsync(
       `UPDATE daily_allowance

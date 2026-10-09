@@ -28,8 +28,10 @@ export default function RestorePasswordScreen() {
 
   const [password, setPassword] = useState('');
   const [isRestoring, setIsRestoring] = useState(false);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
 
   const handleRestore = async () => {
+    setRestoreError(null);
     if (!password) {
       Alert.alert(
         'Password Required',
@@ -51,14 +53,14 @@ export default function RestorePasswordScreen() {
 
       const backup = await readBackupFile(fileUri);
 
-      await restoreBackup(
+      const summary = await restoreBackup(
         backup,
         password,
       );
 
       Alert.alert(
         'Restore Successful',
-        'Your database has been restored successfully.',
+        `Restored ${summary.recordCount} records and ${summary.attachmentCount} receipt attachments. Attachment data passed its integrity checks.`,
         [
           {
             text: 'OK',
@@ -69,16 +71,19 @@ export default function RestorePasswordScreen() {
         ],
       );
     } catch (error) {
-      console.error(
-        'Restore failed:',
-        error,
-      );
+      const message = error instanceof Error
+        ? error.message
+        : 'Unable to restore the backup.';
+      const isDecryptionFailure = message.startsWith('Unable to decrypt backup.');
 
-      Alert.alert(
-        'Restore Failed',
-        error instanceof Error
-          ? error.message
-          : 'Unable to restore the backup.',
+      if (!isDecryptionFailure) {
+        console.error('Restore failed:', error);
+      }
+
+      setRestoreError(
+        isDecryptionFailure
+          ? 'We couldn’t verify this backup. Check that you entered the password used to create it and selected the original backup file. The file may also be damaged. Your current data has not been changed; you can try again.'
+          : `${message} Your current data has not been changed. You can try again.`,
       );
     } finally {
       setIsRestoring(false);
@@ -149,7 +154,10 @@ export default function RestorePasswordScreen() {
 
         <TextInput
           value={password}
-          onChangeText={setPassword}
+          onChangeText={(value) => {
+            setPassword(value);
+            setRestoreError(null);
+          }}
           placeholder="Backup password"
           placeholderTextColor={colors.textMuted}
           secureTextEntry
@@ -166,6 +174,25 @@ export default function RestorePasswordScreen() {
             },
           ]}
         />
+
+        {restoreError ? (
+          <View
+            accessibilityRole="alert"
+            style={[
+              styles.errorContainer,
+              {
+                backgroundColor: colors.dangerBackground,
+                borderColor: colors.danger,
+                borderRadius: borderRadius.md,
+              },
+            ]}
+          >
+            <MaterialIcons name="error-outline" size={20} color={colors.danger} />
+            <Text style={[styles.errorText, { color: colors.danger }]}>
+              {restoreError}
+            </Text>
+          </View>
+        ) : null}
 
         <Pressable
           onPress={handleRestore}
@@ -193,7 +220,7 @@ export default function RestorePasswordScreen() {
                 },
               ]}
             >
-              Restore Backup
+              {restoreError ? 'Try Again' : 'Restore Backup'}
             </Text>
           )}
         </Pressable>
@@ -259,6 +286,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     fontSize: 16,
     marginBottom: 16,
+  },
+
+  errorContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    borderWidth: 1,
+    padding: 12,
+    marginBottom: 16,
+  },
+
+  errorText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 19,
   },
 
   button: {

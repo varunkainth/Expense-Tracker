@@ -2,7 +2,7 @@
   "expo": {
     "name": "Expense Tracker",
     "slug": "expense_tracker",
-    "version": "1.0.0",
+    "version": "1.5.0",
     "orientation": "portrait",
     "icon": "./assets/app-icons/appstore.png",
     "scheme": "expensetracker",
@@ -13,6 +13,13 @@
     },
     "android": {
       "package": "com.expensetracker.app",
+      "blockedPermissions": [
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.DOWNLOAD_WITHOUT_NOTIFICATION",
+        "android.permission.RECORD_AUDIO"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/app-icons/android/adaptive-foreground.png"
@@ -37,7 +44,18 @@
       "expo-sqlite",
       "expo-secure-store",
       "expo-sharing",
-      "@react-native-community/datetimepicker"
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Expense Tracker to select receipt images.",
+          "cameraPermission": "Allow Expense Tracker to take receipt photos.",
+          "microphonePermission": false
+        }
+      ],
+      "@react-native-community/datetimepicker",
+      "react-native-blob-util",
+      "@config-plugins/react-native-pdf",
+      "@config-plugins/react-native-blob-util"
     ],
     "experiments": {
       "typedRoutes": true,

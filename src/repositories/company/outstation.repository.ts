@@ -12,7 +12,7 @@ export class OutstationConveyanceRepository {
     const db = await getDatabase();
     if (employeeId) {
       return await db.getAllAsync<OutstationConveyance>(
-        `SELECT id, employee_id, date, from_location, departure_time, to_location, arrival_time, mode, amount, created_at, updated_at
+        `SELECT id, employee_id, date, from_location, departure_time, to_location, arrival_time, mode, amount, complaint_no, created_at, updated_at
          FROM outstation_conveyance
          WHERE employee_id = ?
          ORDER BY date DESC;`,
@@ -20,7 +20,7 @@ export class OutstationConveyanceRepository {
       );
     }
     return await db.getAllAsync<OutstationConveyance>(
-      `SELECT id, employee_id, date, from_location, departure_time, to_location, arrival_time, mode, amount, created_at, updated_at
+      `SELECT id, employee_id, date, from_location, departure_time, to_location, arrival_time, mode, amount, complaint_no, created_at, updated_at
        FROM outstation_conveyance
        ORDER BY date DESC;`
     );
@@ -29,7 +29,7 @@ export class OutstationConveyanceRepository {
   async getById(id: string): Promise<OutstationConveyance | null> {
     const db = await getDatabase();
     return await db.getFirstAsync<OutstationConveyance>(
-      `SELECT id, employee_id, date, from_location, departure_time, to_location, arrival_time, mode, amount, created_at, updated_at
+      `SELECT id, employee_id, date, from_location, departure_time, to_location, arrival_time, mode, amount, complaint_no, created_at, updated_at
        FROM outstation_conveyance
        WHERE id = ?;`,
       [id]
@@ -45,8 +45,8 @@ export class OutstationConveyanceRepository {
 
     await db.runAsync(
       `INSERT INTO outstation_conveyance (
-        id, employee_id, date, from_location, departure_time, to_location, arrival_time, mode, amount, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        id, employee_id, date, from_location, departure_time, to_location, arrival_time, mode, amount, complaint_no, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
       [
         id,
         data.employee_id,
@@ -57,6 +57,7 @@ export class OutstationConveyanceRepository {
         arrivalTime,
         data.mode,
         data.amount,
+        data.complaint_no,
         timestamp,
         timestamp,
       ]
@@ -72,6 +73,7 @@ export class OutstationConveyanceRepository {
       arrival_time: arrivalTime,
       mode: data.mode,
       amount: data.amount,
+      complaint_no: data.complaint_no,
       created_at: timestamp,
       updated_at: timestamp,
     };
@@ -85,6 +87,7 @@ export class OutstationConveyanceRepository {
     }
 
     const timestamp = getCurrentTimestamp();
+    const complaintNo = data.complaint_no ?? existing.complaint_no;
     const employeeId = data.employee_id ?? existing.employee_id;
     const date = data.date ?? existing.date;
     const fromLocation = data.from_location ?? existing.from_location;
@@ -96,7 +99,7 @@ export class OutstationConveyanceRepository {
 
     await db.runAsync(
       `UPDATE outstation_conveyance
-       SET employee_id = ?, date = ?, from_location = ?, departure_time = ?, to_location = ?, arrival_time = ?, mode = ?, amount = ?, updated_at = ?
+       SET employee_id = ?, date = ?, from_location = ?, departure_time = ?, to_location = ?, arrival_time = ?, mode = ?, amount = ?, complaint_no = ?, updated_at = ?
        WHERE id = ?;`,
       [
         employeeId,
@@ -107,6 +110,7 @@ export class OutstationConveyanceRepository {
         arrivalTime,
         mode,
         amount,
+        complaintNo,
         timestamp,
         id,
       ]
@@ -122,6 +126,7 @@ export class OutstationConveyanceRepository {
       arrival_time: arrivalTime,
       mode,
       amount,
+      complaint_no: complaintNo,
       created_at: existing.created_at,
       updated_at: timestamp,
     };

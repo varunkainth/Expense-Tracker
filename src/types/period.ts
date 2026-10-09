@@ -7,6 +7,11 @@ export type MonthPeriod =
   | { kind: 'month'; year: number; monthIndex: number }
   | { kind: 'all' };
 
+export function getCurrentMonthPeriod(): MonthPeriod {
+  const now = new Date();
+  return { kind: 'month', year: now.getFullYear(), monthIndex: now.getMonth() };
+}
+
 /** Inclusive start, exclusive end — both epoch ms in device-local time. */
 export interface PeriodRange {
   start: number | null; // null = no lower bound

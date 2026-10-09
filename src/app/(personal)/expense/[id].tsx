@@ -383,8 +383,11 @@ const handleEdit = () => {
       FALLBACK_CATEGORY
     ];
 
-  const iconName =
-    meta.icon as MaterialIconName;
+  const iconName = (
+    DEFAULT_CATEGORY_METAS[expense.category_name || FALLBACK_CATEGORY]
+      ? meta.icon
+      : expense.category_icon || meta.icon
+  ) as MaterialIconName;
 
   return (
     <SafeAreaView
@@ -504,6 +507,13 @@ const handleEdit = () => {
                 {expense.payment_method}
               </Text>
             </View>
+
+            {expense.subcategory_name ? (
+              <View style={styles.detailRow}>
+                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Subcategory</Text>
+                <Text style={[styles.detailValue, { color: colors.text }]}>{expense.subcategory_name}</Text>
+              </View>
+            ) : null}
 
             <View
               style={styles.detailRow}

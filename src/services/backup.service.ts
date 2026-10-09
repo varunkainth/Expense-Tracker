@@ -1,6 +1,7 @@
 import * as DocumentPicker from 'expo-document-picker';
-import { File, Paths } from 'expo-file-system';
+import { Directory, File, Paths } from 'expo-file-system';
 import { saveFileWithAndroidPicker } from './native/payment-file-saver';
+import { Buffer } from 'react-native-quick-crypto';
 // import * as Sharing from 'expo-sharing';
 
 import type { SQLiteBindValue } from 'expo-sqlite';
@@ -12,42 +13,31 @@ import {
   encryptBackup,
   EncryptedBackup,
 } from './security/backup-crypto.service';
+import { generateUUID } from '../utils/uuid';
+import {
+  BACKUP_TABLES,
+  BackupContentSummary,
+  BackupData,
+  BackupTableName,
+  summarizeBackupData,
+  upgradeBackupData,
+  validateBackupAttachment,
+} from './backup-data';
+import { recordSuccessfulBackup } from './backup-status.service';
 
 const BACKUP_FORMAT = 'payment-app-backup';
-const BACKUP_VERSION = 1;
+// Version of the encrypted .pab envelope. This is independent of the
+// database schema version stored in `schema_version` below.
+const BACKUP_FORMAT_VERSION = 1;
 const BACKUP_EXTENSION = '.pab';
 
-const TABLES = [
-  'categories',
-  'personal_expenses',
-  'employee_details',
-  'local_conveyance',
-  'outstation_conveyance',
-  'hotel',
-  'tour_conveyance',
-  'phone_expense',
-  'miscellaneous_expense',
-  'daily_allowance',
-] as const;
-
-export type BackupTableName = (typeof TABLES)[number];
-
-export interface BackupData {
-  categories: unknown[];
-  personal_expenses: unknown[];
-  employee_details: unknown[];
-  local_conveyance: unknown[];
-  outstation_conveyance: unknown[];
-  hotel: unknown[];
-  tour_conveyance: unknown[];
-  phone_expense: unknown[];
-  miscellaneous_expense: unknown[];
-  daily_allowance: unknown[];
-}
+export type { BackupContentSummary, BackupData, BackupTableName } from './backup-data';
 
 export interface PaymentAppBackup {
   format: typeof BACKUP_FORMAT;
+  /** Encrypted .pab container format version. */
   version: number;
+  /** Database schema version used by the encrypted table data. */
   schema_version: number;
   created_at: number;
 
@@ -76,12 +66,30 @@ export async function createBackup(): Promise<BackupData> {
 
   const data = {} as BackupData;
 
-  for (const table of TABLES) {
-    const rows = await db.getAllAsync(
+  for (const table of BACKUP_TABLES) {
+    const rows = await db.getAllAsync<Record<string, unknown>>(
       `SELECT * FROM ${table};`,
     );
 
-    data[table] = rows;
+    if (table === 'company_expense_attachments') {
+      const directory = new Directory(Paths.document, 'company-expense-attachments');
+      data[table] = await Promise.all(rows.map(async (row) => {
+        const file = new File(directory, String(row.storage_name));
+        if (!file.exists) {
+          throw new Error(`Attachment file is missing: ${String(row.file_name)}.`);
+        }
+        const bytes = await file.bytes();
+        if (!Number.isInteger(row.size_bytes) || bytes.byteLength !== row.size_bytes) {
+          throw new Error(`Attachment data failed its integrity check: ${String(row.file_name)}.`);
+        }
+        return {
+          ...row,
+          file_base64: Buffer.from(bytes).toString('base64'),
+        };
+      }));
+    } else {
+      data[table] = rows;
+    }
   }
 
   return data;
@@ -102,9 +110,9 @@ export function serializeBackup(
  * Password is used only during encryption and is never
  * stored inside the backup.
  */
-export async function createEncryptedBackup(
+async function createEncryptedBackupSnapshot(
   password: string,
-): Promise<PaymentAppBackup> {
+): Promise<{ backup: PaymentAppBackup; summary: BackupContentSummary }> {
   if (!password) {
     throw new Error(
       'Backup password is required.',
@@ -112,7 +120,7 @@ export async function createEncryptedBackup(
   }
 
   const data = await createBackup();
-
+  const summary = summarizeBackupData(data);
   const plaintext = serializeBackup(data);
 
   const encrypted = encryptBackup(
@@ -121,12 +129,22 @@ export async function createEncryptedBackup(
   );
 
   return {
-    format: BACKUP_FORMAT,
-    version: BACKUP_VERSION,
-    schema_version: CURRENT_SCHEMA_VERSION,
-    created_at: Date.now(),
-    crypto: encrypted,
+    backup: {
+      format: BACKUP_FORMAT,
+      version: BACKUP_FORMAT_VERSION,
+      schema_version: CURRENT_SCHEMA_VERSION,
+      created_at: Date.now(),
+      crypto: encrypted,
+    },
+    summary,
   };
+}
+
+export async function createEncryptedBackup(
+  password: string,
+): Promise<PaymentAppBackup> {
+  const { backup } = await createEncryptedBackupSnapshot(password);
+  return backup;
 }
 
 /**
@@ -183,8 +201,8 @@ export async function createTemporaryBackupFile(
  */
 export async function createAndSaveBackup(
   password: string,
-): Promise<string> {
-  const backup = await createEncryptedBackup(password);
+): Promise<{ uri: string; summary: BackupContentSummary; createdAt: number }> {
+  const { backup, summary } = await createEncryptedBackupSnapshot(password);
 
   const json = serializeEncryptedBackup(backup);
 
@@ -195,10 +213,13 @@ export async function createAndSaveBackup(
   const filename =
     `payment-app-backup-${timestamp}.pab`;
 
-  return await saveFileWithAndroidPicker(
+  const uri = await saveFileWithAndroidPicker(
     filename,
     json,
   );
+  const createdAt = backup.created_at;
+  await recordSuccessfulBackup({ ...summary, createdAt });
+  return { uri, summary, createdAt };
 }
 
 /**
@@ -275,7 +296,7 @@ export function validateBackup(
   }
 
   if (
-    candidate.version !== BACKUP_VERSION
+    candidate.version !== BACKUP_FORMAT_VERSION
   ) {
     throw new Error(
       `Unsupported backup version: ${candidate.version}.`,
@@ -288,6 +309,16 @@ export function validateBackup(
   ) {
     throw new Error(
       'Backup schema version is missing.',
+    );
+  }
+
+  if (
+    !Number.isInteger(candidate.schema_version) ||
+    candidate.schema_version < 1 ||
+    candidate.schema_version > CURRENT_SCHEMA_VERSION
+  ) {
+    throw new Error(
+      `Unsupported database schema version: ${candidate.schema_version}. This app supports backups through schema version ${CURRENT_SCHEMA_VERSION}.`,
     );
   }
 
@@ -425,7 +456,7 @@ export function decryptBackupData(
     );
   }
 
-  validateBackupData(parsed);
+  validateBackupData(parsed, backup.schema_version);
 
   return parsed;
 }
@@ -435,6 +466,7 @@ export function decryptBackupData(
  */
 function validateBackupData(
   data: unknown,
+  schemaVersion: number,
 ): asserts data is BackupData {
   if (
     typeof data !== 'object' ||
@@ -448,7 +480,19 @@ function validateBackupData(
   const candidate =
     data as Partial<BackupData>;
 
-  for (const table of TABLES) {
+  for (const table of BACKUP_TABLES) {
+    if (table === 'company_expense_attachments' && schemaVersion < 4) {
+      continue;
+    }
+    if (table === 'subcategories' && schemaVersion < 6) {
+      continue;
+    }
+    if (
+      ['split_groups', 'split_people', 'split_expenses'].includes(table) &&
+      schemaVersion < 7
+    ) {
+      continue;
+    }
     if (
       !Array.isArray(candidate[table])
     ) {
@@ -459,31 +503,67 @@ function validateBackupData(
   }
 }
 
-/**
- * Restore backup data.
- *
- * IMPORTANT:
- * This function intentionally remains disabled until
- * transaction-safe database replacement is implemented.
- */
+/** Restore backup data, upgrading supported older schemas in one transaction. */
 export async function restoreBackup(
   backup: PaymentAppBackup,
   password: string,
-): Promise<void> {
+): Promise<BackupContentSummary> {
   // 1. Decrypt and validate before touching the database.
   const data = decryptBackupData(
     backup,
     password,
   );
 
-  // 2. Make sure this backup matches the current schema.
-  if (backup.schema_version !== CURRENT_SCHEMA_VERSION) {
-    throw new Error(
-      `Backup schema version ${backup.schema_version} is not compatible with the current database schema ${CURRENT_SCHEMA_VERSION}.`,
-    );
-  }
+  // 2. Upgrade older supported schemas before inserting their rows.
+  const currentSchemaData = upgradeBackupData(
+    data,
+    backup.schema_version,
+  );
+  const summary = summarizeBackupData(currentSchemaData);
+  const attachmentPayloads = currentSchemaData.company_expense_attachments.map(
+    validateBackupAttachment,
+  );
 
   const db = await getDatabase();
+  const attachmentDirectory = new Directory(
+    Paths.document,
+    'company-expense-attachments',
+  );
+  attachmentDirectory.create({ idempotent: true, intermediates: true });
+  const oldAttachments = await db.getAllAsync<{ storage_name: string }>(
+    'SELECT storage_name FROM company_expense_attachments;',
+  );
+  const stagedFiles: File[] = [];
+  const attachmentRows: Record<string, unknown>[] = [];
+
+  try {
+    for (const { row, encoded, byteLength } of attachmentPayloads) {
+      const bytes = Buffer.from(encoded, 'base64');
+      if (bytes.byteLength !== byteLength) {
+        throw new Error(`Attachment data failed its integrity check: ${String(row.file_name)}.`);
+      }
+      const extension = row.mime_type === 'application/pdf' ? '.pdf' : '.jpg';
+      const storageName = `${generateUUID()}${extension}`;
+      const file = new File(attachmentDirectory, storageName);
+      file.create({ overwrite: false });
+      stagedFiles.push(file);
+      file.write(bytes);
+      const savedBytes = await file.bytes();
+      if (
+        savedBytes.byteLength !== bytes.byteLength ||
+        !Buffer.from(savedBytes).equals(bytes)
+      ) {
+        throw new Error(`Could not verify restored attachment: ${String(row.file_name)}.`);
+      }
+      const { file_base64: _fileBase64, ...metadata } = row;
+      attachmentRows.push({ ...metadata, storage_name: storageName });
+    }
+  } catch (error) {
+    for (const file of stagedFiles) {
+      if (file.exists) file.delete();
+    }
+    throw error;
+  }
 
   let transactionStarted = false;
 
@@ -498,7 +578,12 @@ export async function restoreBackup(
 
     // Child tables first because of foreign keys.
     await db.execAsync(`
+      DELETE FROM split_expenses;
+      DELETE FROM split_people;
+      DELETE FROM split_groups;
       DELETE FROM personal_expenses;
+      DELETE FROM subcategories;
+      DELETE FROM company_expense_attachments;
       DELETE FROM local_conveyance;
       DELETE FROM outstation_conveyance;
       DELETE FROM hotel;
@@ -518,61 +603,77 @@ export async function restoreBackup(
     await insertBackupRows(
       db,
       'categories',
-      data.categories,
+      currentSchemaData.categories,
     );
 
     await insertBackupRows(
       db,
+      'subcategories',
+      currentSchemaData.subcategories,
+    );
+
+    await insertBackupRows(db, 'split_groups', currentSchemaData.split_groups);
+    await insertBackupRows(db, 'split_people', currentSchemaData.split_people);
+    await insertBackupRows(db, 'split_expenses', currentSchemaData.split_expenses);
+
+    await insertBackupRows(
+      db,
       'employee_details',
-      data.employee_details,
+      currentSchemaData.employee_details,
     );
 
     await insertBackupRows(
       db,
       'personal_expenses',
-      data.personal_expenses,
+      currentSchemaData.personal_expenses,
     );
 
     await insertBackupRows(
       db,
       'local_conveyance',
-      data.local_conveyance,
+      currentSchemaData.local_conveyance,
     );
 
     await insertBackupRows(
       db,
       'outstation_conveyance',
-      data.outstation_conveyance,
+      currentSchemaData.outstation_conveyance,
     );
 
     await insertBackupRows(
       db,
       'hotel',
-      data.hotel,
+      currentSchemaData.hotel,
     );
 
     await insertBackupRows(
       db,
       'tour_conveyance',
-      data.tour_conveyance,
+      currentSchemaData.tour_conveyance,
     );
 
     await insertBackupRows(
       db,
       'phone_expense',
-      data.phone_expense,
+      currentSchemaData.phone_expense,
     );
 
     await insertBackupRows(
       db,
       'miscellaneous_expense',
-      data.miscellaneous_expense,
+      currentSchemaData.miscellaneous_expense,
     );
 
     await insertBackupRows(
       db,
       'daily_allowance',
-      data.daily_allowance,
+      currentSchemaData.daily_allowance,
+    );
+
+    await insertBackupRows(
+      db,
+      'company_expense_attachments',
+      attachmentRows,
     );
 
     // ---------------------------------------------------------
@@ -581,6 +682,17 @@ export async function restoreBackup(
 
     await db.execAsync('COMMIT;');
     transactionStarted = false;
+
+    for (const attachment of oldAttachments) {
+      try {
+        const oldFile = new File(attachmentDirectory, attachment.storage_name);
+        if (oldFile.exists) oldFile.delete();
+      } catch (cleanupError) {
+        console.warn('Could not remove a replaced attachment file:', cleanupError);
+      }
+    }
+
+    return summary;
 
   } catch (error) {
     // ---------------------------------------------------------
@@ -596,6 +708,10 @@ export async function restoreBackup(
           rollbackError,
         );
       }
+    }
+
+    for (const file of stagedFiles) {
+      if (file.exists) file.delete();
     }
 
     console.error(
