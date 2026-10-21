@@ -42,7 +42,7 @@ export default function CompanyScreen() {
   );
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+    <SafeAreaView edges={['top', 'left', 'right']} style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView contentContainerStyle={[styles.scrollContent, { padding: spacing.base }]}>
         {/* Header */}
         <View style={styles.headerRow}>

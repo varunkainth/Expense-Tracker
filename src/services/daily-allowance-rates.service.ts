@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getPreference, setPreference, deletePreference } from './preferences.service';
 import { DAILY_ALLOWANCE_RATES, DailyAllowanceRates } from '../types/company';
 
 const DAILY_ALLOWANCE_RATES_STORAGE_KEY = '@payment_app_daily_allowance_rates';
@@ -9,12 +9,12 @@ export class DailyAllowanceRatesService {
    */
   static async getRates(): Promise<DailyAllowanceRates> {
     try {
-      const stored = await AsyncStorage.getItem(DAILY_ALLOWANCE_RATES_STORAGE_KEY);
+      const stored = await getPreference(DAILY_ALLOWANCE_RATES_STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
         if (
-          typeof parsed?.TRAVEL_ALLOWANCE_PAISE === 'number' &&
-          typeof parsed?.FOOD_ALLOWANCE_PAISE === 'number' &&
+          Number.isSafeInteger(parsed?.TRAVEL_ALLOWANCE_PAISE) &&
+          Number.isSafeInteger(parsed?.FOOD_ALLOWANCE_PAISE) &&
           parsed.TRAVEL_ALLOWANCE_PAISE > 0 &&
           parsed.FOOD_ALLOWANCE_PAISE > 0
         ) {
@@ -40,7 +40,7 @@ export class DailyAllowanceRatesService {
     travelPaise: number,
     foodPaise: number,
   ): Promise<DailyAllowanceRates> {
-    if (travelPaise <= 0 || foodPaise <= 0) {
+    if (!Number.isSafeInteger(travelPaise) || !Number.isSafeInteger(foodPaise) || !Number.isSafeInteger(travelPaise + foodPaise) || travelPaise <= 0 || foodPaise <= 0) {
       throw new Error('Allowance rates must be greater than zero.');
     }
 
@@ -50,7 +50,7 @@ export class DailyAllowanceRatesService {
       TOTAL_ALLOWANCE_PAISE: Math.round(travelPaise + foodPaise),
     };
 
-    await AsyncStorage.setItem(
+    await setPreference(
       DAILY_ALLOWANCE_RATES_STORAGE_KEY,
       JSON.stringify(rates),
     );
@@ -62,7 +62,7 @@ export class DailyAllowanceRatesService {
    * Reset rates back to default ₹400 travel and ₹600 food.
    */
   static async resetToDefaults(): Promise<DailyAllowanceRates> {
-    await AsyncStorage.removeItem(DAILY_ALLOWANCE_RATES_STORAGE_KEY);
+    await deletePreference(DAILY_ALLOWANCE_RATES_STORAGE_KEY);
     return DAILY_ALLOWANCE_RATES;
   }
 }

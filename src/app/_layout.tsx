@@ -1,9 +1,11 @@
-import { Stack } from 'expo-router';
+import { Stack, router } from 'expo-router';
+import * as Notifications from 'expo-notifications';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import {
   AppState,
   AppStateStatus,
+  Platform,
   StyleSheet,
   Text,
   View,
@@ -17,6 +19,9 @@ import { useDatabase } from '../hooks/useDatabase';
 import { ThemeProvider, useTheme } from '../hooks/useTheme';
 import { AuthService } from '../services/auth.service';
 import { SecurityService } from '../services/security.service';
+import { initializeReminderNotifications } from '../services/reminder-notifications.service';
+
+const handledReminderResponses = new Set<string>();
 
 // Keep the native splash visible until the database is ready.
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -35,6 +40,11 @@ function AppLockGuard({
   const appState = useRef<AppStateStatus>(AppState.currentState);
   const authenticating = useRef(false);
 
+  useEffect(() => {
+    if (isLoading || isLocked) return;
+    void initializeReminderNotifications().catch((cause) => console.warn('Could not initialize reminders:', cause));
+  }, [isLoading, isLocked]);
+
   const authenticate = useCallback(async () => {
     if (authenticating.current) return;
     authenticating.current = true;
@@ -49,6 +59,7 @@ function AppLockGuard({
       const success = await AuthService.authenticate('Unlock Payment App');
       if (success) setIsLocked(false);
     } catch (error) {
+      setIsLocked(true);
       console.error('App Lock authentication error:', error);
     } finally {
       authenticating.current = false;
@@ -57,7 +68,8 @@ function AppLockGuard({
   }, []);
 
   useEffect(() => {
-    authenticate();
+    const timer = setTimeout(() => { void authenticate(); }, 0);
+    return () => clearTimeout(timer);
   }, [authenticate]);
 
   useEffect(() => {
@@ -74,8 +86,11 @@ function AppLockGuard({
         nextState === 'active';
 
       if (wentToBackground) {
-        const enabled = await SecurityService.isAppLockEnabled();
-        if (enabled) setIsLocked(true);
+        try {
+          if (await SecurityService.isAppLockEnabled()) setIsLocked(true);
+        } catch {
+          setIsLocked(true);
+        }
       }
       if (returnedToForeground) {
         await authenticate();
@@ -84,11 +99,20 @@ function AppLockGuard({
     return () => subscription.remove();
   }, [authenticate]);
 
-  if (isLoading || isLocked) {
-    return <AppLockScreen isLoading={isLoading} onAuthenticate={authenticate} />;
-  }
-
-  return <>{children}</>;
+  return (
+    <View style={{ flex: 1 }}>
+      <View style={{ flex: 1 }} pointerEvents={isLoading || isLocked ? 'none' : 'auto'}
+        accessibilityElementsHidden={isLoading || isLocked}
+        importantForAccessibility={isLoading || isLocked ? 'no-hide-descendants' : 'auto'}>
+        {children}
+      </View>
+      {(isLoading || isLocked) && (
+        <View style={StyleSheet.absoluteFill}>
+          <AppLockScreen isLoading={isLoading} onAuthenticate={authenticate} />
+        </View>
+      )}
+    </View>
+  );
 }
 
 function AppLockScreen({
@@ -104,7 +128,7 @@ function AppLockScreen({
         <Text style={lockStyles.lockIcon}>🔐</Text>
       </View>
       <Text style={lockStyles.title}>Payment App Locked</Text>
-      <Text style={lockStyles.message}>Authenticate to continue</Text>
+      <Text style={lockStyles.message}>Use biometrics or your phone’s screen lock to continue</Text>
       {!isLoading && (
         <View style={lockStyles.buttonContainer}>
           <Text style={lockStyles.button} onPress={onAuthenticate}>
@@ -126,6 +150,29 @@ function AppContent({ onReady }: { onReady: () => void }) {
   useEffect(() => {
     if (isReady || error) onReady();
   }, [isReady, error, onReady]);
+
+  useEffect(() => {
+    if (!isReady || Platform.OS === 'web') return;
+    const openReminder = (response: Notifications.NotificationResponse | null) => {
+      if (!response) return;
+      const request = response.notification.request;
+      if (handledReminderResponses.has(request.identifier)) return;
+      const data = request.content.data;
+      if (data?.owner !== 'expense-tracker-reminder' || typeof data.recordId !== 'string') return;
+      handledReminderResponses.add(request.identifier);
+      Notifications.clearLastNotificationResponse();
+      if (data.kind === 'subscription') {
+        router.push({ pathname: '/settings/subscriptions/[id]', params: { id: data.recordId, dueAt: String(data.dueAt ?? '') } });
+      } else if (data.kind === 'recurring') {
+        router.push({ pathname: '/settings/recurring/[id]', params: { id: data.recordId } });
+      } else if (data.kind === 'investment') {
+        router.push({ pathname: '/settings/investments/[id]', params: { id: data.recordId, dueAt: String(data.dueAt ?? '') } });
+      }
+    };
+    openReminder(Notifications.getLastNotificationResponse());
+    const listener = Notifications.addNotificationResponseReceivedListener(openReminder);
+    return () => listener.remove();
+  }, [isReady]);
 
   const alert = {
     visible: false,
@@ -188,6 +235,17 @@ function AppContent({ onReady }: { onReady: () => void }) {
               options={{ title: 'Spending Insights', animation: 'slide_from_right' }}
             />
             <Stack.Screen name="settings/categories" options={{ title: 'Expense Categories', animation: 'slide_from_right' }} />
+            <Stack.Screen name="settings/budgets" options={{ title: 'Category Budgets', animation: 'slide_from_right' }} />
+            <Stack.Screen name="settings/budgets/[categoryId]" options={{ title: 'Budget Insights', animation: 'slide_from_right' }} />
+            <Stack.Screen name="settings/notifications" options={{ title: 'Notifications', animation: 'slide_from_right' }} />
+            <Stack.Screen name="settings/upcoming" options={{ title: 'Upcoming Payments', animation: 'slide_from_right' }} />
+            <Stack.Screen name="settings/subscriptions/[id]" options={{ title: 'Subscription', animation: 'slide_from_right' }} />
+            <Stack.Screen name="settings/recurring/[id]" options={{ title: 'Recurring Expense', animation: 'slide_from_right' }} />
+            <Stack.Screen name="settings/investments" options={{ title: 'Investments', animation: 'slide_from_right' }} />
+            <Stack.Screen name="settings/investments/[id]" options={{ title: 'SIP plan', animation: 'slide_from_right' }} />
+            <Stack.Screen name="settings/investments/form" options={{ title: 'SIP plan', animation: 'slide_from_right' }} />
+            <Stack.Screen name="settings/investments/one-time" options={{ title: 'One-time investment', animation: 'slide_from_right' }} />
+            <Stack.Screen name="settings/investments/contribution/[id]" options={{ title: 'Edit investment entry', animation: 'slide_from_right' }} />
             <Stack.Screen
               name="(personal)/add-expense"
               options={{
@@ -268,6 +326,10 @@ function AppContent({ onReady }: { onReady: () => void }) {
             <Stack.Screen
               name="settings/data"
               options={{ title: 'Export', animation: 'slide_from_right' }}
+            />
+            <Stack.Screen
+              name="settings/subscriptions"
+              options={{ title: 'Subscriptions', animation: 'slide_from_right' }}
             />
             <Stack.Screen name="crypto-test" options={{ title: 'Crypto Test' }} />
           </Stack>

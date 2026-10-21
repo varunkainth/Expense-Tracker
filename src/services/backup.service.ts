@@ -23,6 +23,9 @@ import {
   upgradeBackupData,
   validateBackupAttachment,
 } from './backup-data';
+import { notifyPreferencesChanged } from './preferences.service';
+import { personalExpenseUndoService } from './personal-expense-undo.service';
+import { validateRestorableData } from './backup-validation';
 import { recordSuccessfulBackup } from './backup-status.service';
 
 const BACKUP_FORMAT = 'payment-app-backup';
@@ -66,8 +69,9 @@ export async function createBackup(): Promise<BackupData> {
 
   const data = {} as BackupData;
 
+  await db.withExclusiveTransactionAsync(async (tx) => {
   for (const table of BACKUP_TABLES) {
-    const rows = await db.getAllAsync<Record<string, unknown>>(
+    const rows = await tx.getAllAsync<Record<string, unknown>>(
       `SELECT * FROM ${table};`,
     );
 
@@ -92,6 +96,7 @@ export async function createBackup(): Promise<BackupData> {
     }
   }
 
+  });
   return data;
 }
 
@@ -123,7 +128,7 @@ async function createEncryptedBackupSnapshot(
   const summary = summarizeBackupData(data);
   const plaintext = serializeBackup(data);
 
-  const encrypted = encryptBackup(
+  const encrypted = await encryptBackup(
     plaintext,
     password,
   );
@@ -435,13 +440,13 @@ function validateEncryptedBackup(
  * This only decrypts and validates the data.
  * It does NOT modify the current database.
  */
-export function decryptBackupData(
+export async function decryptBackupData(
   backup: PaymentAppBackup,
   password: string,
-): BackupData {
+): Promise<BackupData> {
   validateBackup(backup);
 
-  const plaintext = decryptBackup(
+  const plaintext = await decryptBackup(
     backup.crypto,
     password,
   );
@@ -481,6 +486,9 @@ function validateBackupData(
     data as Partial<BackupData>;
 
   for (const table of BACKUP_TABLES) {
+    if (schemaVersion < 8 && ['app_preferences', 'recurring_expenses'].includes(table)) continue;
+    if (schemaVersion < 9 && table === 'subscriptions') continue;
+    if (schemaVersion < 11 && ['investment_plans', 'investment_contributions'].includes(table)) continue;
     if (table === 'company_expense_attachments' && schemaVersion < 4) {
       continue;
     }
@@ -503,13 +511,20 @@ function validateBackupData(
   }
 }
 
+export async function previewBackup(backup: PaymentAppBackup, password: string): Promise<BackupContentSummary> {
+  const data = upgradeBackupData(await decryptBackupData(backup, password), backup.schema_version);
+  validateRestorableData(data);
+  data.company_expense_attachments.forEach(validateBackupAttachment);
+  return summarizeBackupData(data);
+}
+
 /** Restore backup data, upgrading supported older schemas in one transaction. */
 export async function restoreBackup(
   backup: PaymentAppBackup,
   password: string,
 ): Promise<BackupContentSummary> {
   // 1. Decrypt and validate before touching the database.
-  const data = decryptBackupData(
+  const data = await decryptBackupData(
     backup,
     password,
   );
@@ -519,6 +534,7 @@ export async function restoreBackup(
     data,
     backup.schema_version,
   );
+  validateRestorableData(currentSchemaData);
   const summary = summarizeBackupData(currentSchemaData);
   const attachmentPayloads = currentSchemaData.company_expense_attachments.map(
     validateBackupAttachment,
@@ -530,9 +546,7 @@ export async function restoreBackup(
     'company-expense-attachments',
   );
   attachmentDirectory.create({ idempotent: true, intermediates: true });
-  const oldAttachments = await db.getAllAsync<{ storage_name: string }>(
-    'SELECT storage_name FROM company_expense_attachments;',
-  );
+  let oldAttachments: { storage_name: string }[] = [];
   const stagedFiles: File[] = [];
   const attachmentRows: Record<string, unknown>[] = [];
 
@@ -565,23 +579,25 @@ export async function restoreBackup(
     throw error;
   }
 
-  let transactionStarted = false;
-
   try {
     // 3. Start transaction.
-    await db.execAsync('BEGIN TRANSACTION;');
-    transactionStarted = true;
+    await db.withExclusiveTransactionAsync(async (tx) => {
+    oldAttachments = await tx.getAllAsync<{ storage_name: string }>('SELECT storage_name FROM company_expense_attachments;');
 
     // ---------------------------------------------------------
     // DELETE EXISTING DATA
     // ---------------------------------------------------------
 
     // Child tables first because of foreign keys.
-    await db.execAsync(`
+    await tx.execAsync(`
       DELETE FROM split_expenses;
       DELETE FROM split_people;
       DELETE FROM split_groups;
       DELETE FROM personal_expenses;
+      DELETE FROM recurring_expenses;
+      DELETE FROM subscriptions;
+      DELETE FROM investment_contributions;
+      DELETE FROM investment_plans;
       DELETE FROM subcategories;
       DELETE FROM company_expense_attachments;
       DELETE FROM local_conveyance;
@@ -600,78 +616,90 @@ export async function restoreBackup(
     // INSERT BACKUP DATA
     // ---------------------------------------------------------
 
+    // Older backups do not contain preferences; retain this device's choices.
+    if (backup.schema_version >= 8) {
+      await tx.execAsync('DELETE FROM app_preferences;');
+      await insertBackupRows(tx, 'app_preferences', currentSchemaData.app_preferences);
+    }
     await insertBackupRows(
-      db,
+      tx,
       'categories',
       currentSchemaData.categories,
     );
 
     await insertBackupRows(
-      db,
+      tx,
       'subcategories',
       currentSchemaData.subcategories,
     );
 
-    await insertBackupRows(db, 'split_groups', currentSchemaData.split_groups);
-    await insertBackupRows(db, 'split_people', currentSchemaData.split_people);
-    await insertBackupRows(db, 'split_expenses', currentSchemaData.split_expenses);
+    await insertBackupRows(tx, 'split_groups', currentSchemaData.split_groups);
+    await insertBackupRows(tx, 'split_people', currentSchemaData.split_people);
+    await insertBackupRows(tx, 'split_expenses', currentSchemaData.split_expenses);
 
     await insertBackupRows(
-      db,
+      tx,
       'employee_details',
       currentSchemaData.employee_details,
     );
 
+    await insertBackupRows(tx, 'recurring_expenses', currentSchemaData.recurring_expenses);
+
+    await insertBackupRows(tx, 'subscriptions', currentSchemaData.subscriptions);
+
+    await insertBackupRows(tx, 'investment_plans', currentSchemaData.investment_plans);
+    await insertBackupRows(tx, 'investment_contributions', currentSchemaData.investment_contributions);
+
     await insertBackupRows(
-      db,
+      tx,
       'personal_expenses',
       currentSchemaData.personal_expenses,
     );
 
     await insertBackupRows(
-      db,
+      tx,
       'local_conveyance',
       currentSchemaData.local_conveyance,
     );
 
     await insertBackupRows(
-      db,
+      tx,
       'outstation_conveyance',
       currentSchemaData.outstation_conveyance,
     );
 
     await insertBackupRows(
-      db,
+      tx,
       'hotel',
       currentSchemaData.hotel,
     );
 
     await insertBackupRows(
-      db,
+      tx,
       'tour_conveyance',
       currentSchemaData.tour_conveyance,
     );
 
     await insertBackupRows(
-      db,
+      tx,
       'phone_expense',
       currentSchemaData.phone_expense,
     );
 
     await insertBackupRows(
-      db,
+      tx,
       'miscellaneous_expense',
       currentSchemaData.miscellaneous_expense,
     );
 
     await insertBackupRows(
-      db,
+      tx,
       'daily_allowance',
       currentSchemaData.daily_allowance,
     );
 
     await insertBackupRows(
-      db,
+      tx,
       'company_expense_attachments',
       attachmentRows,
     );
@@ -680,8 +708,9 @@ export async function restoreBackup(
     // COMMIT
     // ---------------------------------------------------------
 
-    await db.execAsync('COMMIT;');
-    transactionStarted = false;
+    });
+    personalExpenseUndoService.clear();
+    notifyPreferencesChanged();
 
     for (const attachment of oldAttachments) {
       try {
@@ -698,17 +727,6 @@ export async function restoreBackup(
     // ---------------------------------------------------------
     // ROLLBACK
     // ---------------------------------------------------------
-
-    if (transactionStarted) {
-      try {
-        await db.execAsync('ROLLBACK;');
-      } catch (rollbackError) {
-        console.error(
-          'Database rollback failed:',
-          rollbackError,
-        );
-      }
-    }
 
     for (const file of stagedFiles) {
       if (file.exists) file.delete();

@@ -321,8 +321,7 @@ try {
                   },
                 ]}
               >
-                Require Fingerprint / Face ID / Device
-                authentication to open the app
+                Use your fingerprint or face to open the app. Your phone’s screen lock is available after biometric attempts fail.
               </Text>
             </View>
 

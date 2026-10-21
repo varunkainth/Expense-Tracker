@@ -14,7 +14,7 @@ export class SecurityService {
         error,
       );
 
-      return false;
+      throw error;
     }
   }
 

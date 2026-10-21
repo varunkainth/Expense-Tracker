@@ -12,9 +12,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { DEFAULT_CATEGORY_METAS } from '../constants/categories';
+import CategoryIcon from '../components/CategoryIcon';
 import { useTheme } from '../hooks/useTheme';
 import { categoryRepository } from '../repositories/personal/category.repository';
 import { personalExpenseRepository } from '../repositories/personal/expense.repository';
+import { InvestmentContribution, listInvestmentContributionsInRange } from '../repositories/investment.repository';
 import { Category, PersonalExpenseWithCategory } from '../types/personal';
 import { formatPaiseToRupees } from '../utils/currency';
 import { formatDate } from '../utils/date';
@@ -58,6 +60,7 @@ export default function SpendingInsightsScreen() {
   const { colors, spacing, borderRadius, shadows } = useTheme();
   const [periodMonths, setPeriodMonths] = useState<PeriodMonths>(6);
   const [expenses, setExpenses] = useState<PersonalExpenseWithCategory[]>([]);
+  const [investments, setInvestments] = useState<InvestmentContribution[]>([]);
   const [savedCategories, setSavedCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedCategoryId, setExpandedCategoryId] = useState<string | null>(null);
@@ -77,11 +80,13 @@ export default function SpendingInsightsScreen() {
       Promise.all([
         personalExpenseRepository.getAll({ startDate: rangeStart, endDate: rangeEnd }),
         categoryRepository.getAll(),
+        listInvestmentContributionsInRange(rangeStart, rangeEnd),
       ])
-        .then(([rows, categories]) => {
+        .then(([rows, categories, contributions]) => {
           if (active) {
             setExpenses(rows);
             setSavedCategories(categories);
+            setInvestments(contributions);
           }
         })
         .catch((error) => {
@@ -89,6 +94,7 @@ export default function SpendingInsightsScreen() {
           if (active) {
             setExpenses([]);
             setSavedCategories([]);
+            setInvestments([]);
           }
         })
         .finally(() => {
@@ -121,6 +127,7 @@ export default function SpendingInsightsScreen() {
   const currentMonthTotal = sumBetween(expenses, currentMonthStart, currentMonthEnd);
   const previousMonthTotal = sumBetween(expenses, previousMonthStart, previousMonthComparableEnd);
   const periodTotal = expenses.reduce((sum, expense) => sum + safeAmount(expense.amount), 0);
+  const investmentPeriodTotal = investments.reduce((sum, investment) => sum + safeAmount(investment.amount), 0);
 
   const monthPoints = (() => {
     const points: MonthPoint[] = [];
@@ -175,6 +182,14 @@ export default function SpendingInsightsScreen() {
   })();
 
   const maxMonthTotal = Math.max(1, ...monthPoints.map((point) => point.total));
+  const outflowPoints = monthPoints.map((point) => {
+    const [year, month] = point.key.split('-').map(Number);
+    const start = new Date(year, month, 1).getTime();
+    const end = Math.min(new Date(year, month + 1, 1).getTime() - 1, now.getTime());
+    const invested = investments.reduce((sum, entry) => entry.invested_at >= start && entry.invested_at <= end ? sum + safeAmount(entry.amount) : sum, 0);
+    return { ...point, invested, outflow: point.total + invested };
+  });
+  const maxOutflow = Math.max(1, ...outflowPoints.map((point) => point.outflow));
   const comparisonDifference = currentMonthTotal - previousMonthTotal;
   const comparisonPercent = previousMonthTotal > 0
     ? Math.round((Math.abs(comparisonDifference) / previousMonthTotal) * 100)
@@ -255,7 +270,7 @@ export default function SpendingInsightsScreen() {
         showsVerticalScrollIndicator={false}
       >
         <Text style={[styles.intro, { color: colors.textSecondary }]}>
-          A clear view of your personal spending over time.
+          See your spending and investment outflow over time.
         </Text>
 
         <View style={[styles.periodPicker, { backgroundColor: colors.surfaceVariant, borderRadius: borderRadius.full }]}>
@@ -316,6 +331,31 @@ export default function SpendingInsightsScreen() {
 
             <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: borderRadius.lg }]}>
               <View style={styles.sectionHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.sectionTitle, { color: colors.text }]}>Total outflow</Text>
+                  <Text style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>Expenses + investments · {formatPaiseToRupees(periodTotal + investmentPeriodTotal)}</Text>
+                </View>
+                <MaterialIcons name="stacked-bar-chart" size={22} color={colors.primary} />
+              </View>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 14, marginBottom: 12 }}>
+                <Text style={{ color: colors.textSecondary, fontSize: 12 }}>● Expenses {formatPaiseToRupees(periodTotal)}</Text>
+                <Text style={{ color: colors.primary, fontSize: 12 }}>● Investments {formatPaiseToRupees(investmentPeriodTotal)}</Text>
+              </View>
+              {outflowPoints.map((point) => <View key={point.key} style={{ gap: 5, marginBottom: 13 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
+                  <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '600' }}>{point.label} {point.year}</Text>
+                  <Text style={{ color: colors.text, fontSize: 12, fontWeight: '700' }}>{formatPaiseToRupees(point.outflow)}</Text>
+                </View>
+                <View style={{ height: 9, borderRadius: 5, backgroundColor: colors.surfaceVariant, overflow: 'hidden', flexDirection: 'row' }}>
+                  {point.total > 0 && <View style={{ width: `${(point.total / maxOutflow) * 100}%`, backgroundColor: colors.textSecondary }} />}
+                  {point.invested > 0 && <View style={{ width: `${(point.invested / maxOutflow) * 100}%`, backgroundColor: colors.primary }} />}
+                </View>
+                <Text style={{ color: colors.textMuted, fontSize: 11 }}>Expenses {getCompactAmount(point.total)} · Investments {getCompactAmount(point.invested)}</Text>
+              </View>)}
+            </View>
+
+            <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: borderRadius.lg }]}>
+              <View style={styles.sectionHeader}>
                 <View>
                   <Text style={[styles.sectionTitle, { color: colors.text }]}>Spending trend</Text>
                   <Text style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>Total: {formatPaiseToRupees(periodTotal)}</Text>
@@ -367,6 +407,8 @@ export default function SpendingInsightsScreen() {
                 const expanded = expandedCategoryId === category.id;
                 const percent = periodTotal > 0 ? Math.round((category.total / periodTotal) * 100) : 0;
                 const meta = DEFAULT_CATEGORY_METAS[category.name] ?? DEFAULT_CATEGORY_METAS.Other;
+                const savedCategory = savedCategories.find((item) => item.id === category.id);
+                const categoryIcon = savedCategory?.is_default === 1 ? meta.icon : savedCategory?.icon ?? meta.icon;
                 return (
                   <View key={category.id} style={[styles.categoryBlock, { borderTopColor: colors.border }]}>
                     <TouchableOpacity
@@ -379,7 +421,7 @@ export default function SpendingInsightsScreen() {
                       style={styles.categoryRow}
                     >
                       <View style={[styles.categoryIcon, { backgroundColor: meta.bgColor, borderRadius: borderRadius.md }]}>
-                        <MaterialIcons name={meta.icon as keyof typeof MaterialIcons.glyphMap} size={19} color={meta.color} />
+                        <CategoryIcon icon={categoryIcon} size={19} color={meta.color} />
                       </View>
                       <View style={styles.categoryInfo}>
                         <View style={styles.categoryNameRow}>

@@ -30,6 +30,62 @@ export default function SettingsScreen() {
           route: '/settings/categories',
         },
         {
+          id: 'budgets',
+          title: 'Category Budgets',
+          subtitle: 'Set monthly limits for each expense category',
+          icon: 'account-balance-wallet',
+          iconColor: '#4f46e5',
+          route: '/settings/budgets',
+        },
+        {
+          id: 'insights',
+          title: 'Spending Insights',
+          subtitle: 'Explore personal spending patterns',
+          icon: 'insights',
+          iconColor: '#6366f1',
+          route: '/insights',
+        },
+        {
+          id: 'recurring',
+          title: 'Recurring Expenses',
+          subtitle: 'Manage monthly bills that record automatically',
+          icon: 'repeat',
+          iconColor: '#0ea5e9',
+          route: '/settings/recurring',
+        },
+        {
+          id: 'upcoming',
+          title: 'Upcoming Payments',
+          subtitle: 'SIPs, subscriptions, and recurring expenses together',
+          icon: 'event',
+          iconColor: '#0891b2',
+          route: '/settings/upcoming',
+        },
+        {
+          id: 'subscriptions',
+          title: 'Subscriptions',
+          subtitle: 'Confirm monthly payments on their due date',
+          icon: 'subscriptions',
+          iconColor: '#db2777',
+          route: '/settings/subscriptions',
+        },
+        {
+          id: 'investments',
+          title: 'Investments & SIPs',
+          subtitle: 'Track monthly contributions separately from spending',
+          icon: 'trending-up',
+          iconColor: '#059669',
+          route: '/settings/investments',
+        },
+        {
+          id: 'notifications',
+          title: 'Notifications',
+          subtitle: 'Scheduled payment and SIP reminders',
+          icon: 'notifications-active',
+          iconColor: '#f59e0b',
+          route: '/settings/notifications',
+        },
+        {
           id: 'appearance',
           title: 'Appearance',
           subtitle: 'Light, Dark, and System theme',
@@ -80,7 +136,7 @@ export default function SettingsScreen() {
 
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+    <SafeAreaView edges={['top', 'left', 'right']} style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView contentContainerStyle={[styles.scrollContent, { padding: spacing.base }]}>
         {/* Header */}
         <View style={styles.headerRow}>
@@ -130,7 +186,7 @@ export default function SettingsScreen() {
         {/* Version Note */}
         <View style={styles.versionContainer}>
           <Text style={[styles.versionText, { color: colors.textMuted }]}>
-            Payment App • V1.5.0 (Beta) • Local-First
+            Expense Tracker • V2.0.0 • Local-First
           </Text>
         </View>
       </ScrollView>

@@ -2,6 +2,8 @@ import { getDatabase } from '../../database/client';
 import { Category, CreateCategoryDTO, CreateSubcategoryDTO, Subcategory } from '../../types/personal';
 import { generateUUID } from '../../utils/uuid';
 import { getCurrentTimestamp } from '../../utils/date';
+import { categoryBudgetKey } from '../../services/category-budget.service';
+import { deletePreference } from '../../services/preferences.service';
 
 export class CategoryRepository {
   async getSubcategories(categoryId: string): Promise<Subcategory[]> {
@@ -48,7 +50,10 @@ export class CategoryRepository {
     );
   }
 
-  /** Categories used most often appear first in the expense form. */
+  /**
+   * Categories used most often appear first in the expense form. When two
+   * categories have the same usage count, the one used most recently wins.
+   */
   async getAllByUsage(): Promise<Category[]> {
     const db = await getDatabase();
     return db.getAllAsync<Category>(
@@ -56,7 +61,10 @@ export class CategoryRepository {
        FROM categories c
        LEFT JOIN personal_expenses e ON e.category_id = c.id
        GROUP BY c.id
-       ORDER BY COUNT(e.id) DESC, c.is_default DESC, c.name COLLATE NOCASE ASC;`,
+       ORDER BY
+         COUNT(e.id) DESC,
+         MAX(e.expense_date) DESC,
+         c.name COLLATE NOCASE ASC;`,
     );
   }
 
@@ -117,6 +125,7 @@ export class CategoryRepository {
   async delete(id: string): Promise<void> {
     const db = await getDatabase();
     await db.runAsync(`DELETE FROM categories WHERE id = ?;`, [id]);
+    await deletePreference(categoryBudgetKey(id));
   }
 }
 

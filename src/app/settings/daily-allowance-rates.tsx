@@ -5,7 +5,6 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -18,7 +17,6 @@ import { useTheme } from '../../hooks/useTheme';
 import { DailyAllowanceRatesService } from '../../services/daily-allowance-rates.service';
 import {
   DAILY_ALLOWANCE_RATES,
-  DailyAllowanceRates,
 } from '../../types/company';
 import {
   formatPaiseToRupees,
@@ -51,10 +49,13 @@ export default function DailyAllowanceRatesScreen() {
     loadRates();
   }, []);
 
-  const parsedTravel = parseFloat(travelInput) || 0;
-  const parsedFood = parseFloat(foodInput) || 0;
-  const travelPaise = rupeesToPaise(parsedTravel);
-  const foodPaise = rupeesToPaise(parsedFood);
+  const parseInput = (value: string) => {
+    try { return rupeesToPaise(value); } catch { return 0; }
+  };
+  const travelPaise = parseInput(travelInput);
+  const foodPaise = parseInput(foodInput);
+  const parsedTravel = travelPaise / 100;
+  const parsedFood = foodPaise / 100;
   const totalDailyPaise = travelPaise + foodPaise;
 
   const handleSave = async () => {
@@ -103,7 +104,7 @@ export default function DailyAllowanceRatesScreen() {
               setTravelInput(String(paiseToRupees(defaults.TRAVEL_ALLOWANCE_PAISE)));
               setFoodInput(String(paiseToRupees(defaults.FOOD_ALLOWANCE_PAISE)));
               Alert.alert('Reset Complete', 'Daily Allowance rates restored to defaults.');
-            } catch (err) {
+            } catch {
               Alert.alert('Error', 'Failed to reset rates.');
             } finally {
               setSaving(false);

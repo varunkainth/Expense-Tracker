@@ -332,12 +332,12 @@ export default function DataExportScreen() {
         onClose={onPickerClose}
       />
 
-      <AttendanceExtrasDialog
+      {extrasVisible && <AttendanceExtrasDialog
         visible={extrasVisible}
         period={period}
         onCancel={onExtrasCancel}
         onConfirm={onAttendanceConfirmed}
-      />
+      />}
     </SafeAreaView>
   );
 }

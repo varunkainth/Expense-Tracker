@@ -1,10 +1,11 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SQLite from 'expo-sqlite';
 import { Migration } from '../types/database';
 import { seedDefaultCategories } from './seed';
 import { generateUUID } from '../utils/uuid';
 import { getCurrentTimestamp } from '../utils/date';
 
-export const CURRENT_SCHEMA_VERSION = 7;
+export const CURRENT_SCHEMA_VERSION = 12;
 
 export const MIGRATION_1_SQL = `
   -- 1. categories
@@ -334,6 +335,59 @@ export const MIGRATION_7_SQL = `
   CREATE INDEX idx_split_expenses_payer ON split_expenses(paid_by_person_id);
 `;
 
+export const MIGRATION_8_SQL = `
+  CREATE TABLE app_preferences (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);
+  CREATE TABLE recurring_expenses (
+    id TEXT PRIMARY KEY NOT NULL,
+    amount INTEGER NOT NULL CHECK (amount > 0),
+    category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE RESTRICT,
+    subcategory_id TEXT REFERENCES subcategories(id) ON DELETE SET NULL,
+    description TEXT,
+    payment_method TEXT NOT NULL,
+    day_of_month INTEGER NOT NULL CHECK (day_of_month BETWEEN 1 AND 31),
+    next_due INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+`;
+
+export const MIGRATION_9_SQL = `
+  CREATE TABLE subscriptions (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL,
+    amount INTEGER NOT NULL CHECK (amount > 0),
+    category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE RESTRICT,
+    subcategory_id TEXT REFERENCES subcategories(id) ON DELETE SET NULL,
+    payment_method TEXT NOT NULL,
+    day_of_month INTEGER NOT NULL CHECK (day_of_month BETWEEN 1 AND 31),
+    next_due INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX idx_subscriptions_next_due ON subscriptions(next_due);
+`;
+
+export const MIGRATION_11_SQL = `
+  CREATE TABLE investment_plans (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL,
+    amount INTEGER NOT NULL CHECK (amount > 0),
+    day_of_month INTEGER NOT NULL CHECK (day_of_month BETWEEN 1 AND 31),
+    next_due INTEGER NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX idx_investment_plans_next_due ON investment_plans(active, next_due);
+  CREATE TABLE investment_contributions (
+    id TEXT PRIMARY KEY NOT NULL,
+    plan_id TEXT NOT NULL REFERENCES investment_plans(id) ON DELETE CASCADE,
+    amount INTEGER NOT NULL CHECK (amount > 0),
+    due_at INTEGER NOT NULL,
+    invested_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    UNIQUE (plan_id, due_at)
+  );
+  CREATE INDEX idx_investment_contributions_plan_date ON investment_contributions(plan_id, invested_at DESC);
+`;
+
 export const MIGRATIONS: Migration[] = [
   {
     version: 1,
@@ -402,6 +456,47 @@ export const MIGRATIONS: Migration[] = [
     description: 'Friends expense sharing and settlement groups',
     up: async (db: SQLite.SQLiteDatabase) => {
       await db.execAsync(MIGRATION_7_SQL);
+    },
+  },
+  {
+    version: 8,
+    description: 'Backed-up preferences and monthly recurring personal expenses',
+    up: async (db: SQLite.SQLiteDatabase) => {
+      await db.execAsync(MIGRATION_8_SQL);
+      for (const key of ['@payment_app_appearance', '@payment_app_daily_allowance_rates']) {
+        const value = await AsyncStorage.getItem(key);
+        if (value !== null) {
+          await db.runAsync('INSERT INTO app_preferences (key, value) VALUES (?, ?);', [key, value]);
+        }
+      }
+    },
+  },
+  {
+    version: 9,
+    description: 'Subscription payment reminders',
+    up: async (db: SQLite.SQLiteDatabase) => {
+      await db.execAsync(MIGRATION_9_SQL);
+    },
+  },
+  {
+    version: 10,
+    description: 'Add Transfer personal expense category',
+    up: async (db: SQLite.SQLiteDatabase) => {
+      await seedDefaultCategories(db);
+    },
+  },
+  {
+    version: 11,
+    description: 'Separate monthly investment plans and contribution history',
+    up: async (db: SQLite.SQLiteDatabase) => {
+      await db.execAsync(MIGRATION_11_SQL);
+    },
+  },
+  {
+    version: 12,
+    description: 'Support one-time investments alongside monthly SIP plans',
+    up: async (db: SQLite.SQLiteDatabase) => {
+      await db.execAsync("ALTER TABLE investment_plans ADD COLUMN frequency TEXT NOT NULL DEFAULT 'monthly' CHECK (frequency IN ('monthly', 'one_time'));");
     },
   },
 ];

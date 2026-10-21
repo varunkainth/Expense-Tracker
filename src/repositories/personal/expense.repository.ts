@@ -1,3 +1,4 @@
+import { assertValidAmount, assertValidTimestamp } from '../../utils/validation';
 import { getDatabase } from '../../database/client';
 import {
   CreatePersonalExpenseDTO,
@@ -9,6 +10,14 @@ import { generateUUID } from '../../utils/uuid';
 import { getCurrentTimestamp, isFutureDate } from '../../utils/date';
 
 export class PersonalExpenseRepository {
+  private async validateSubcategory(categoryId: string, subcategoryId?: string | null): Promise<void> {
+    if (!subcategoryId) return;
+    const db = await getDatabase();
+    if (!await db.getFirstAsync('SELECT id FROM subcategories WHERE id = ? AND category_id = ?;', [subcategoryId, categoryId])) {
+      throw new Error('Choose a subcategory belonging to the selected category.');
+    }
+  }
+
   /**
    * Retrieves all personal expenses,
    * optionally joined with category details.
@@ -122,6 +131,10 @@ export class PersonalExpenseRepository {
       throw new Error('Personal expenses cannot be dated in the future.');
     }
 
+    assertValidAmount(data.amount);
+    assertValidTimestamp(expenseDate);
+    await this.validateSubcategory(data.category_id, data.subcategory_id);
+
     const description =
       data.description ?? null;
 
@@ -208,6 +221,10 @@ export class PersonalExpenseRepository {
     if (isFutureDate(updatedExpenseDate, updatedTimestamp)) {
       throw new Error('Personal expenses cannot be dated in the future.');
     }
+
+    assertValidAmount(updatedAmount);
+    assertValidTimestamp(updatedExpenseDate);
+    await this.validateSubcategory(updatedCategoryId, data.subcategory_id !== undefined ? data.subcategory_id : existing.subcategory_id);
 
     await db.runAsync(
       `

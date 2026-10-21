@@ -1,3 +1,4 @@
+import { assertValidAmount, assertValidTimestamp } from '../../utils/validation';
 import { getDatabase } from '../../database/client';
 import { DailyAllowanceRatesService } from '../../services/daily-allowance-rates.service';
 import {
@@ -58,7 +59,7 @@ export class DailyAllowanceRepository {
     const id = generateUUID();
     const timestamp = getCurrentTimestamp();
 
-    if (!Number.isFinite(data.no_of_days) || data.no_of_days <= 0) {
+    if (!Number.isSafeInteger(data.no_of_days) || data.no_of_days <= 0) {
       throw new Error('no_of_days must be a positive number.');
     }
 
@@ -67,6 +68,13 @@ export class DailyAllowanceRepository {
     const foodAllowance = data.food_allowance ?? computed.foodAllowance;
     const totalAmount = data.total_amount ?? (travelAllowance + foodAllowance);
 
+    assertValidTimestamp(data.start_date);
+    assertValidTimestamp(data.end_date);
+    if (data.end_date < data.start_date) throw new Error('End date cannot precede start date.');
+    assertValidAmount(travelAllowance);
+    assertValidAmount(foodAllowance);
+    assertValidAmount(totalAmount);
+    if (totalAmount !== travelAllowance + foodAllowance) throw new Error('Allowance total does not match its parts.');
     await db.runAsync(
       `INSERT INTO daily_allowance (
         id, employee_id, no_of_days, start_date, end_date,
@@ -119,6 +127,7 @@ export class DailyAllowanceRepository {
     let foodAllowance = data.food_allowance ?? existing.food_allowance;
     let totalAmount = data.total_amount ?? existing.total_amount;
 
+    if (!Number.isSafeInteger(noOfDays) || noOfDays <= 0) throw new Error('Enter a positive whole number of days.');
     if (data.no_of_days !== undefined) {
       const computed = await computeAllowances(noOfDays);
       if (data.travel_allowance === undefined) travelAllowance = computed.travelAllowance;
@@ -127,6 +136,14 @@ export class DailyAllowanceRepository {
     }
 
 
+    if (data.total_amount === undefined) totalAmount = travelAllowance + foodAllowance;
+    assertValidTimestamp(startDate);
+    assertValidTimestamp(endDate);
+    if (endDate < startDate) throw new Error('End date cannot precede start date.');
+    assertValidAmount(travelAllowance);
+    assertValidAmount(foodAllowance);
+    assertValidAmount(totalAmount);
+    if (totalAmount !== travelAllowance + foodAllowance) throw new Error('Allowance total does not match its parts.');
     await db.runAsync(
       `UPDATE daily_allowance
        SET employee_id = ?, no_of_days = ?, start_date = ?, end_date = ?,

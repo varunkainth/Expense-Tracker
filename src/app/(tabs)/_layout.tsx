@@ -1,13 +1,64 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Tabs } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../../hooks/useTheme';
-import { Platform } from 'react-native';
+import { AccessibilityInfo, Animated, ColorValue, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+type TabName = 'personal' | 'company' | 'split' | 'settings';
+
+function TabIcon({ name, color, size, pulse, reduceMotion }: {
+  name: keyof typeof MaterialIcons.glyphMap;
+  color: ColorValue;
+  size: number;
+  pulse: number;
+  reduceMotion: boolean;
+}) {
+  const [scale] = useState(() => new Animated.Value(1));
+  const lastPulse = useRef(pulse);
+
+  useEffect(() => {
+    if (reduceMotion) {
+      scale.stopAnimation();
+      scale.setValue(1);
+      lastPulse.current = pulse;
+      return;
+    }
+    if (pulse === lastPulse.current) return;
+    lastPulse.current = pulse;
+
+    const animation = Animated.sequence([
+      Animated.timing(scale, { toValue: 0.86, duration: 85, useNativeDriver: true, isInteraction: false }),
+      Animated.spring(scale, { toValue: 1, friction: 6, tension: 140, useNativeDriver: true, isInteraction: false }),
+    ]);
+    animation.start();
+    return () => animation.stop();
+  }, [pulse, reduceMotion, scale]);
+
+  return (
+    <Animated.View style={{ transform: [{ scale }] }}>
+      <MaterialIcons name={name} size={size} color={color} />
+    </Animated.View>
+  );
+}
 
 export default function TabsLayout() {
   const { colors, layout } = useTheme();
   const insets = useSafeAreaInsets();
+  const [tap, setTap] = useState<{ name: TabName | null; count: number }>({ name: null, count: 0 });
+  const [reduceMotion, setReduceMotion] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    void AccessibilityInfo.isReduceMotionEnabled()
+      .then((enabled) => { if (mounted) setReduceMotion(enabled); })
+      .catch((error) => console.warn('Could not read reduce motion setting:', error));
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => { mounted = false; subscription.remove(); };
+  }, []);
+
+  const pulseFor = (name: TabName) => tap.name === name ? tap.count : 0;
+  const onTabPress = (name: TabName) => setTap((previous) => ({ name, count: previous.count + 1 }));
 
   const bottomInset = insets.bottom;
 
@@ -59,52 +110,44 @@ export default function TabsLayout() {
 
       <Tabs.Screen
         name="personal"
+        listeners={{ tabPress: () => onTabPress('personal') }}
         options={{
           title: 'Personal',
           tabBarIcon: ({ color, size }) => (
-            <MaterialIcons
-              name="account-balance-wallet"
-              size={size}
-              color={color}
-            />
+            <TabIcon name="account-balance-wallet" size={size} color={color} pulse={pulseFor('personal')} reduceMotion={reduceMotion} />
           ),
         }}
       />
 
       <Tabs.Screen
         name="company"
+        listeners={{ tabPress: () => onTabPress('company') }}
         options={{
           title: 'Company',
           tabBarIcon: ({ color, size }) => (
-            <MaterialIcons
-              name="business"
-              size={size}
-              color={color}
-            />
+            <TabIcon name="business" size={size} color={color} pulse={pulseFor('company')} reduceMotion={reduceMotion} />
           ),
         }}
       />
 
       <Tabs.Screen
         name="split"
+        listeners={{ tabPress: () => onTabPress('split') }}
         options={{
           title: 'Split',
           tabBarIcon: ({ color, size }) => (
-            <MaterialIcons name="currency-exchange" size={size} color={color} />
+            <TabIcon name="currency-exchange" size={size} color={color} pulse={pulseFor('split')} reduceMotion={reduceMotion} />
           ),
         }}
       />
 
       <Tabs.Screen
         name="settings"
+        listeners={{ tabPress: () => onTabPress('settings') }}
         options={{
           title: 'Settings',
           tabBarIcon: ({ color, size }) => (
-            <MaterialIcons
-              name="settings"
-              size={size}
-              color={color}
-            />
+            <TabIcon name="settings" size={size} color={color} pulse={pulseFor('settings')} reduceMotion={reduceMotion} />
           ),
         }}
       />

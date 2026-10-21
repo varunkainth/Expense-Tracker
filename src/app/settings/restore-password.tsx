@@ -16,8 +16,11 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../../hooks/useTheme';
 import {
   readBackupFile,
+  previewBackup,
+  createAndSaveBackup,
   restoreBackup,
 } from '../../services/backup.service';
+import { syncReminderNotifications } from '../../services/reminder-notifications.service';
 
 export default function RestorePasswordScreen() {
   const { colors, spacing, borderRadius } = useTheme();
@@ -31,6 +34,7 @@ export default function RestorePasswordScreen() {
   const [restoreError, setRestoreError] = useState<string | null>(null);
 
   const handleRestore = async () => {
+    if (isRestoring) return;
     setRestoreError(null);
     if (!password) {
       Alert.alert(
@@ -53,10 +57,26 @@ export default function RestorePasswordScreen() {
 
       const backup = await readBackupFile(fileUri);
 
+      const contents = await previewBackup(backup, password);
+      const action = await new Promise<'cancel' | 'restore' | 'backup'>((resolve) => {
+        Alert.alert(
+          'Review backup contents',
+          `${contents.recordCount} records and ${contents.attachmentCount} receipts (${(contents.attachmentBytes / 1024 / 1024).toFixed(1)} MB).\n\n${backup.schema_version >= 8 ? 'Includes appearance, allowance rates, budgets, and recurring schedules.' : 'Older backup: current preferences will be kept.'}\n\nYour current records will be replaced. Save a backup first? The safety copy uses the password you entered above.`,
+          [
+            { text: 'Cancel', style: 'cancel', onPress: () => resolve('cancel') },
+            { text: 'Replace now', style: 'destructive', onPress: () => resolve('restore') },
+            { text: 'Back up first', onPress: () => resolve('backup') },
+          ],
+          { cancelable: false },
+        );
+      });
+      if (action === 'cancel') return;
+      if (action === 'backup') await createAndSaveBackup(password);
       const summary = await restoreBackup(
         backup,
         password,
       );
+      await syncReminderNotifications().catch((cause) => console.warn('Could not update reminders after restore:', cause));
 
       Alert.alert(
         'Restore Successful',
@@ -83,7 +103,7 @@ export default function RestorePasswordScreen() {
       setRestoreError(
         isDecryptionFailure
           ? 'We couldn’t verify this backup. Check that you entered the password used to create it and selected the original backup file. The file may also be damaged. Your current data has not been changed; you can try again.'
-          : `${message} Your current data has not been changed. You can try again.`,
+          : `${message} Restore did not complete. You can try again.`,
       );
     } finally {
       setIsRestoring(false);
@@ -136,7 +156,7 @@ export default function RestorePasswordScreen() {
             },
           ]}
         >
-          Enter Backup Password
+          Preview & Restore
         </Text>
 
         <Text

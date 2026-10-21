@@ -16,7 +16,7 @@ import {
 export default function CryptoTestScreen() {
   const [result, setResult] = useState('Not tested');
 
-  const runTest = () => {
+  const runTest = async () => {
     try {
       const password = 'TestBackupPassword123!';
 
@@ -27,7 +27,7 @@ export default function CryptoTestScreen() {
       });
 
       // 1. Encrypt
-      const encrypted = encryptBackup(
+      const encrypted = await encryptBackup(
         originalData,
         password,
       );
@@ -38,7 +38,7 @@ export default function CryptoTestScreen() {
       );
 
       // 2. Decrypt using correct password
-      const decrypted = decryptBackup(
+      const decrypted = await decryptBackup(
         encrypted,
         password,
       );
@@ -53,7 +53,7 @@ export default function CryptoTestScreen() {
       let wrongPasswordRejected = false;
 
       try {
-        decryptBackup(
+        await decryptBackup(
           encrypted,
           'WrongPassword123!',
         );
@@ -80,7 +80,7 @@ export default function CryptoTestScreen() {
               : 'AA'),
         };
 
-        decryptBackup(
+        await decryptBackup(
           tamperedBackup,
           password,
         );

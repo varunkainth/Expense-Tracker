@@ -8,6 +8,8 @@ class PersonalExpenseUndoService {
   private pendingExpense: PersonalExpense | null =
     null;
 
+  private timer: ReturnType<typeof setTimeout> | null = null;
+
   private listeners = new Set<UndoListener>();
 
   /**
@@ -16,7 +18,9 @@ class PersonalExpenseUndoService {
   setPendingExpense(
     expense: PersonalExpense,
   ): void {
+    if (this.timer) clearTimeout(this.timer);
     this.pendingExpense = expense;
+    this.timer = setTimeout(() => this.clear(), 3000);
 
     this.notify();
   }
@@ -32,6 +36,8 @@ class PersonalExpenseUndoService {
    * Clears the pending expense.
    */
   clear(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
     this.pendingExpense = null;
 
     this.notify();

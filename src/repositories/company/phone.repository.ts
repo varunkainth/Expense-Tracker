@@ -1,3 +1,4 @@
+import { assertValidAmount, assertValidTimestamp } from '../../utils/validation';
 import { getDatabase } from '../../database/client';
 import { CreatePhoneExpenseDTO, PhoneExpense, UpdatePhoneExpenseDTO } from '../../types/company';
 import { generateUUID } from '../../utils/uuid';
@@ -33,6 +34,8 @@ export class PhoneRepository {
   }
 
   async create(data: CreatePhoneExpenseDTO): Promise<PhoneExpense> {
+    assertValidAmount(data.amount);
+    assertValidTimestamp(data.date);
     const db = await getDatabase();
     const id = generateUUID();
     const timestamp = getCurrentTimestamp();
@@ -85,6 +88,8 @@ export class PhoneRepository {
     const billNo = data.bill_no ?? existing.bill_no;
     const amount = data.amount ?? existing.amount;
 
+    assertValidAmount(amount);
+    assertValidTimestamp(date);
     await db.runAsync(
       `UPDATE phone_expense
        SET employee_id = ?, date = ?, particulars = ?, tel_fax_no = ?, bill_no = ?, amount = ?, complaint_no = ?, updated_at = ?

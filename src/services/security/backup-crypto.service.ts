@@ -30,20 +30,20 @@ function fromBase64(value: string): Buffer {
   return Buffer.from(value, 'base64');
 }
 
-function deriveKey(password: string, salt: Buffer): Buffer {
-  return QuickCrypto.pbkdf2Sync(
-    password,
-    salt,
-    PBKDF2_ITERATIONS,
-    KEY_LENGTH,
-    'sha256',
-  );
+function deriveKey(password: string, salt: Buffer): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    QuickCrypto.pbkdf2(password, salt, PBKDF2_ITERATIONS, KEY_LENGTH, 'sha256', (error, key) => {
+      if (error) reject(error);
+      else if (key) resolve(key);
+      else reject(new Error('Could not derive backup key.'));
+    });
+  });
 }
 
-export function encryptBackup(
+export async function encryptBackup(
   plaintext: string,
   password: string,
-): EncryptedBackup {
+): Promise<EncryptedBackup> {
   if (!password) {
     throw new Error('Backup password is required.');
   }
@@ -57,7 +57,7 @@ export function encryptBackup(
   const salt = QuickCrypto.randomBytes(SALT_LENGTH);
   const iv = QuickCrypto.randomBytes(IV_LENGTH);
 
-  const key = deriveKey(password, salt);
+  const key = await deriveKey(password, salt);
 
   const cipher = QuickCrypto.createCipheriv(
     'aes-256-gcm',
@@ -87,10 +87,10 @@ export function encryptBackup(
   };
 }
 
-export function decryptBackup(
+export async function decryptBackup(
   encryptedBackup: EncryptedBackup,
   password: string,
-): string {
+): Promise<string> {
   if (!password) {
     throw new Error('Backup password is required.');
   }
@@ -124,7 +124,7 @@ export function decryptBackup(
     throw new Error('Invalid backup authentication tag.');
   }
 
-  const key = deriveKey(password, salt);
+  const key = await deriveKey(password, salt);
 
   try {
     const decipher = QuickCrypto.createDecipheriv(

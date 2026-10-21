@@ -1,3 +1,4 @@
+import { assertValidAmount, assertValidTimestamp } from '../../utils/validation';
 import { getDatabase } from '../../database/client';
 import {
   CreateLocalConveyanceDTO,
@@ -37,6 +38,8 @@ export class LocalConveyanceRepository {
   }
 
   async create(data: CreateLocalConveyanceDTO): Promise<LocalConveyance> {
+    assertValidAmount(data.amount);
+    assertValidTimestamp(data.date);
     const db = await getDatabase();
     const id = generateUUID();
     const timestamp = getCurrentTimestamp();
@@ -86,6 +89,8 @@ export class LocalConveyanceRepository {
     const complaintNo = data.complaint_no ?? existing.complaint_no;
     const amount = data.amount ?? existing.amount;
 
+    assertValidAmount(amount);
+    assertValidTimestamp(date);
     await db.runAsync(
       `UPDATE local_conveyance
        SET employee_id = ?, date = ?, particulars = ?, mode = ?, complaint_no = ?, amount = ?, updated_at = ?

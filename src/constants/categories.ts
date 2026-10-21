@@ -54,6 +54,12 @@ export const DEFAULT_CATEGORY_METAS: Record<string, CategoryMeta> = {
     color: '#3b82f6', // Blue
     bgColor: '#dbeafe',
   },
+  Transfer: {
+    name: 'Transfer',
+    icon: 'swap-horiz',
+    color: '#0f766e', // Teal
+    bgColor: '#ccfbf1',
+  },
   Subscription: {
     name: 'Subscription',
     icon: 'subscriptions',

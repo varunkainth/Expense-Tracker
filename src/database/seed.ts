@@ -16,6 +16,7 @@ export const DEFAULT_CATEGORIES: DefaultCategorySeed[] = [
   { name: 'Shopping', icon: 'shopping-bag' },
   { name: 'Travel', icon: 'flight' },
   { name: 'Bills', icon: 'receipt' },
+  { name: 'Transfer', icon: 'swap-horiz' },
   { name: 'Subscription', icon: 'subscriptions' },
   { name: 'Other', icon: 'more-horiz' },
 ];

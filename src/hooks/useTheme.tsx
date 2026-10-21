@@ -1,5 +1,6 @@
 import React, {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -7,7 +8,7 @@ import React, {
 } from 'react';
 
 import { useColorScheme as useRNColorScheme } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getPreference, setPreference, subscribePreferences } from '../services/preferences.service';
 
 import {
   darkColors,
@@ -76,7 +77,7 @@ export function ThemeProvider({
     async function loadAppearance() {
       try {
         const savedMode =
-          await AsyncStorage.getItem(
+          await getPreference(
             APPEARANCE_STORAGE_KEY
           );
 
@@ -86,6 +87,8 @@ export function ThemeProvider({
           savedMode === 'system'
         ) {
           setAppearanceMode(savedMode);
+        } else {
+          setAppearanceMode('system');
         }
       } catch (error) {
         console.error(
@@ -98,28 +101,28 @@ export function ThemeProvider({
     }
 
     loadAppearance();
+    return subscribePreferences(() => { void loadAppearance(); });
   }, []);
 
   /**
    * Change and save appearance preference
    */
-  const setThemeMode = async (
+  const setThemeMode = useCallback(async (
     mode: AppearanceMode
   ) => {
     try {
-      setAppearanceMode(mode);
-
-      await AsyncStorage.setItem(
+      await setPreference(
         APPEARANCE_STORAGE_KEY,
         mode
       );
+      setAppearanceMode(mode);
     } catch (error) {
       console.error(
         'Failed to save appearance preference:',
         error
       );
     }
-  };
+  }, []);
 
   /**
    * Determine the actual active theme
@@ -158,6 +161,7 @@ export function ThemeProvider({
       isDark,
       appearanceMode,
       isLoaded,
+      setThemeMode,
     ]
   );
 

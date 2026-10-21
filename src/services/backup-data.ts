@@ -1,6 +1,11 @@
 export const BACKUP_TABLES = [
+  'app_preferences',
   'categories',
   'subcategories',
+  'recurring_expenses',
+  'subscriptions',
+  'investment_plans',
+  'investment_contributions',
   'personal_expenses',
   'split_groups',
   'split_people',
@@ -19,6 +24,11 @@ export const BACKUP_TABLES = [
 export type BackupTableName = (typeof BACKUP_TABLES)[number];
 
 export interface BackupData {
+  app_preferences: unknown[];
+  recurring_expenses: unknown[];
+  subscriptions: unknown[];
+  investment_plans: unknown[];
+  investment_contributions: unknown[];
   categories: unknown[];
   subcategories: unknown[];
   personal_expenses: unknown[];
@@ -62,7 +72,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function summarizeBackupData(data: BackupData): BackupContentSummary {
   const recordCount = BACKUP_TABLES
-    .filter((table) => table !== 'company_expense_attachments')
+    .filter((table) => table !== 'company_expense_attachments' && table !== 'app_preferences')
     .reduce((total, table) => total + data[table].length, 0);
 
   const attachmentBytes = data.company_expense_attachments.reduce<number>((total, row) => {
@@ -156,6 +166,28 @@ export function upgradeBackupData(
       split_groups: [],
       split_people: [],
       split_expenses: [],
+    };
+  }
+
+  if (schemaVersion < 8) {
+    upgraded = { ...upgraded, app_preferences: [], recurring_expenses: [] };
+  }
+
+  if (schemaVersion < 9) {
+    upgraded = { ...upgraded, subscriptions: [] };
+  }
+
+  if (schemaVersion < 11) {
+    upgraded = { ...upgraded, investment_plans: [], investment_contributions: [] };
+  }
+
+  if (schemaVersion < 12) {
+    upgraded = {
+      ...upgraded,
+      investment_plans: upgraded.investment_plans.map((row) => {
+        if (!isRecord(row)) throw new Error('Invalid investment plan in backup.');
+        return { ...row, frequency: 'monthly' };
+      }),
     };
   }
 

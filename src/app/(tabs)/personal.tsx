@@ -1,15 +1,18 @@
 import { MaterialIcons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Dimensions,
+  Modal,
   Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -27,6 +30,17 @@ import Animated, {
 } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { BackupReminderSnackbar } from '../../components/PersonalTrackingTools';
+import CategoryIcon from '../../components/CategoryIcon';
+import { postDueRecurringExpenses } from '../../repositories/recurring-expense.repository';
+import { syncReminderNotifications } from '../../services/reminder-notifications.service';
+import {
+  confirmSubscriptionPayment,
+  getDueSubscriptions,
+  remindSubscriptionTomorrow,
+  skipSubscriptionThisMonth,
+  Subscription,
+} from '../../repositories/subscription.repository';
 import { personalExpenseUndoService } from '@/services/personal-expense-undo.service';
 
 import { DEFAULT_CATEGORY_METAS } from '../../constants/categories';
@@ -34,6 +48,7 @@ import { useTheme } from '../../hooks/useTheme';
 import { useTabBackBehavior } from '../../hooks/useTabBackBehavior';
 import { personalExpenseRepository } from '../../repositories/personal/expense.repository';
 import { categoryRepository } from '../../repositories/personal/category.repository';
+import { getInvestmentContributionsTotal } from '../../repositories/investment.repository';
 import { Category, PersonalExpenseWithCategory } from '../../types/personal';
 import { formatPaiseToRupees } from '../../utils/currency';
 import { formatDate } from '../../utils/date';
@@ -51,7 +66,8 @@ const CARD_EXIT_DISTANCE = SCREEN_WIDTH * 1.05;
 const PULL_THRESHOLD = 90;
 const PULL_MAX_DISTANCE = PULL_THRESHOLD * 1.6;
 
-const UNDO_DURATION = 3000;
+const subscribeUndo = (listener: () => void) => personalExpenseUndoService.subscribe(listener);
+const getUndo = () => personalExpenseUndoService.getPendingExpense();
 
 const MONTH_NAMES = [
   'January',
@@ -182,11 +198,16 @@ export default function PersonalScreen() {
   const [expenseCategories, setExpenseCategories] = useState<Category[]>([]);
   const [categoryFilterId, setCategoryFilterId] = useState<string | null>(null);
   const [monthTotalPaise, setMonthTotalPaise] = useState<number>(0);
+  const [monthInvestmentsPaise, setMonthInvestmentsPaise] = useState<number>(0);
   const [refreshing, setRefreshing] = useState<boolean>(false);
-  const [undoExpense, setUndoExpense] =
-    useState<PersonalExpenseWithCategory | null>(null);
-  const [undoVisible, setUndoVisible] = useState(false);
-  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const undoExpense = useSyncExternalStore(subscribeUndo, getUndo, () => null);
+  const undoVisible = undoExpense !== null;
+  const [search, setSearch] = useState('');
+  const requestId = useRef(0);
+  const subscriptionPromptVisible = useRef(false);
+  const promptedSubscription = useRef<Subscription | null>(null);
+  const [dueSubscription, setDueSubscription] = useState<Subscription | null>(null);
+  const [subscriptionActionPending, setSubscriptionActionPending] = useState(false);
 
   /*
    * ==============================
@@ -197,6 +218,7 @@ export default function PersonalScreen() {
   const [customFilterDate, setCustomFilterDate] = useState<number>(() => Date.now());
   const [showDatePicker, setShowDatePicker] = useState<boolean>(false);
   const [showDateSelection, setShowDateSelection] = useState(false);
+  const [showCategorySelection, setShowCategorySelection] = useState(false);
   const [datePickerMode, setDatePickerMode] = useState<'single' | 'range'>('single');
   const [pickerTarget, setPickerTarget] = useState<'single' | 'range-start' | 'range-end'>('single');
   const [rangeStartDate, setRangeStartDate] = useState<number>(() => Date.now());
@@ -252,18 +274,20 @@ export default function PersonalScreen() {
 
   const filteredExpenses = useMemo(() => expenses.filter((expense) => {
     if (categoryFilterId && expense.category_id !== categoryFilterId) return false;
+    const query = search.trim().toLocaleLowerCase();
+    if (query && ![expense.description, expense.category_name, expense.subcategory_name, expense.payment_method, String(expense.amount / 100)].some((value) => value?.toLocaleLowerCase().includes(query))) return false;
     if (dateFilter === 'all') return true;
     const { start, end } = dateFilterInfo;
     return start === undefined || end === undefined ||
       (expense.expense_date >= start && expense.expense_date <= end);
-  }), [expenses, categoryFilterId, dateFilter, dateFilterInfo]);
+  }), [expenses, categoryFilterId, dateFilter, dateFilterInfo, search]);
 
   const filteredTotalPaise = useMemo(() => {
     return filteredExpenses.reduce((sum, e) => sum + safeNumber(e.amount), 0);
   }, [filteredExpenses]);
   const selectedCategoryName = expenseCategories.find((category) => category.id === categoryFilterId)?.name;
-  const hasActiveFilter = dateFilter !== 'all' || categoryFilterId !== null;
-  const activeFilterLabel = [dateFilter !== 'all' ? dateFilterInfo.label : null, selectedCategoryName]
+  const hasActiveFilter = dateFilter !== 'all' || categoryFilterId !== null || search.trim() !== '';
+  const activeFilterLabel = [dateFilter !== 'all' ? dateFilterInfo.label : null, selectedCategoryName, search.trim() ? `“${search.trim()}”` : null]
     .filter(Boolean)
     .join(' · ');
 
@@ -287,8 +311,8 @@ export default function PersonalScreen() {
   const isRefreshingShared = useSharedValue(false);
 
   useEffect(() => {
-    isRefreshingShared.value = refreshing;
-  }, [refreshing]);
+    isRefreshingShared.set(refreshing);
+  }, [refreshing, isRefreshingShared]);
 
   /*
    * ==============================
@@ -300,19 +324,22 @@ export default function PersonalScreen() {
     month: MonthData,
     filterRange?: { startDate: number; endDate: number },
   ) => {
+    const currentRequest = ++requestId.current;
     try {
       const startOfMonth = safeNumber(month.startOfMonth);
       const endOfMonth = safeNumber(month.endOfMonth);
 
-      const [monthExpenses, total, categories] = await Promise.all([
+      const [monthExpenses, total, categories, investmentsTotal] = await Promise.all([
         personalExpenseRepository.getAll({
           startDate: filterRange?.startDate ?? startOfMonth,
           endDate: filterRange?.endDate ?? endOfMonth,
         }),
         personalExpenseRepository.getTotalExpenses(startOfMonth, endOfMonth),
         categoryRepository.getAll(),
+        getInvestmentContributionsTotal(startOfMonth, endOfMonth),
       ]);
 
+      if (currentRequest !== requestId.current) return;
       const safeExpenses = Array.isArray(monthExpenses)
         ? monthExpenses.map((expense) => ({
           ...expense,
@@ -323,12 +350,15 @@ export default function PersonalScreen() {
       setExpenses(safeExpenses);
       setExpenseCategories(categories);
       setMonthTotalPaise(safeNumber(total));
+      setMonthInvestmentsPaise(safeNumber(investmentsTotal));
     } catch (error) {
+      if (currentRequest !== requestId.current) return;
       console.error('Error loading personal expenses:', error);
 
       setExpenses([]);
       setExpenseCategories([]);
       setMonthTotalPaise(0);
+      setMonthInvestmentsPaise(0);
     }
   }, []);
 
@@ -341,131 +371,61 @@ export default function PersonalScreen() {
   }, [dateFilter, dateFilterInfo, loadData]);
 
 
-  const clearUndoTimer = useCallback(() => {
-    if (undoTimerRef.current) {
-      clearTimeout(undoTimerRef.current);
-      undoTimerRef.current = null;
-    }
-  }, []);
-
-  const hideUndoSnackbar = useCallback(() => {
-    clearUndoTimer();
-    personalExpenseUndoService.clear();
-    setUndoExpense(null);
-    setUndoVisible(false);
-  }, [clearUndoTimer]);
-
-  const showUndoSnackbar = useCallback(
-    (expense: PersonalExpenseWithCategory) => {
-      clearUndoTimer();
-      setUndoExpense(expense);
-      setUndoVisible(true);
-
-      undoTimerRef.current = setTimeout(() => {
-        personalExpenseUndoService.clear();
-        setUndoExpense(null);
-        setUndoVisible(false);
-        undoTimerRef.current = null;
-      }, UNDO_DURATION);
-    },
-    [clearUndoTimer],
-  );
-
   const handleUndo = useCallback(async () => {
     if (!undoExpense) return;
-
-    const expenseToRestore = undoExpense;
-    clearUndoTimer();
-
     try {
-      await personalExpenseRepository.restore(expenseToRestore);
+      await personalExpenseRepository.restore(undoExpense);
       personalExpenseUndoService.clear();
-      setUndoExpense(null);
-      setUndoVisible(false);
-
-      // Reload the month currently being displayed.
       await loadVisibleData(monthData);
     } catch (error) {
       console.error('Failed to undo expense deletion:', error);
-
-      // Keep the snackbar visible if restore failed.
-      setUndoExpense(expenseToRestore);
-      setUndoVisible(true);
     }
-  }, [undoExpense, clearUndoTimer, loadVisibleData, monthData]);
+  }, [undoExpense, loadVisibleData, monthData]);
 
-  useEffect(() => {
-    const unsubscribe = personalExpenseUndoService.subscribe((expense) => {
-      if (!expense) {
-        clearUndoTimer();
-        setUndoExpense(null);
-        setUndoVisible(false);
-        return;
-      }
-      showUndoSnackbar(expense);
-    });
+  const promptDueSubscription = useCallback(async () => {
+    const dueSubscriptions = await getDueSubscriptions();
+    if (promptedSubscription.current && dueSubscriptions.some((item) => item.id === promptedSubscription.current?.id)) return;
+    promptedSubscription.current = null;
+    subscriptionPromptVisible.current = false;
+    setDueSubscription(null);
+    const subscription = dueSubscriptions[0];
+    if (!subscription) return;
 
-    // The expense may already have been deleted before this
-    // screen mounted again (e.g. navigating from detail screen).
-    const existing = personalExpenseUndoService.getPendingExpense();
-    if (existing) {
-      showUndoSnackbar(existing);
+    subscriptionPromptVisible.current = true;
+    promptedSubscription.current = subscription;
+    setDueSubscription(subscription);
+  }, []);
+
+  const resolveDueSubscription = useCallback(async (action: (item: Subscription) => Promise<void>) => {
+    if (!dueSubscription || subscriptionActionPending) return;
+    setSubscriptionActionPending(true);
+    try {
+      await action(dueSubscription);
+      await syncReminderNotifications().catch((cause) => console.warn('Could not update subscription reminders:', cause));
+      promptedSubscription.current = null;
+      setDueSubscription(null);
+      await loadVisibleData(monthData);
+    } catch (error) {
+      console.error('Could not update subscription:', error);
+      Alert.alert('Could not update subscription', 'Please try again.');
+    } finally {
+      subscriptionPromptVisible.current = false;
+      setSubscriptionActionPending(false);
     }
+  }, [dueSubscription, loadVisibleData, monthData, subscriptionActionPending]);
 
-    return () => {
-      unsubscribe();
-      clearUndoTimer();
-    };
-  }, [clearUndoTimer, showUndoSnackbar]);
-
-  /*
-   * Reload whenever month changes.
-   */
-
-  useEffect(() => {
-    loadVisibleData(monthData);
-  }, [monthData, loadVisibleData]);
-
-  /*
-   * ==============================
-   * SCREEN FOCUS
-   * ==============================
-   *
-   * Reload data whenever this screen
-   * becomes active again.
-   *
-   * This is important after:
-   * - Add Expense
-   * - Editing an expense
-   * - Deleting an expense
-   */
-
-  useFocusEffect(
-    useCallback(() => {
-      // Always return to current month
-      setMonthOffset(0);
-
-      // Reset month card animation
-      translateX.value = 0;
-      cardOpacity.value = 1;
-      isAnimating.value = false;
-
-      /*
-       * Reload expenses from database.
-       *
-       * This makes newly added expenses appear when returning from Add Expense.
-       */
-      const currentMonth = getMonthData(0);
-
-      loadVisibleData(currentMonth);
-
-    }, [
-      loadVisibleData,
-      translateX,
-      cardOpacity,
-      isAnimating,
-    ]),
-  );
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    postDueRecurringExpenses()
+      .then(async (posted) => {
+        if (!active) return;
+        if (posted > 0) await syncReminderNotifications().catch((cause) => console.warn('Could not update recurring reminders:', cause));
+        await loadVisibleData(monthData);
+        if (active) await promptDueSubscription();
+      })
+      .catch((error) => console.error('Could not load recurring expenses:', error));
+    return () => { active = false; requestId.current += 1; };
+  }, [loadVisibleData, monthData, promptDueSubscription]));
 
   /*
    * ==============================
@@ -502,13 +462,13 @@ export default function PersonalScreen() {
     onScroll: (event) => {
       const offsetY = event.contentOffset.y;
       // offsetY is negative when pulling down past the top
-      pullDistance.value = offsetY < 0 ? -offsetY : 0;
+      pullDistance.set(offsetY < 0 ? -offsetY : 0);
     },
     onEndDrag: (event) => {
       const offsetY = event.contentOffset.y;
 
       if (
-        !isRefreshingShared.value &&
+        !isRefreshingShared.get() &&
         offsetY < -PULL_THRESHOLD
       ) {
         runOnJS(onRefresh)();
@@ -524,11 +484,11 @@ export default function PersonalScreen() {
 
   // The indicator pill follows the finger
   const refreshIndicatorStyle = useAnimatedStyle(() => {
-    const pull = Math.min(pullDistance.value, PULL_MAX_DISTANCE);
+    const pull = Math.min(pullDistance.get(), PULL_MAX_DISTANCE);
 
     return {
       transform: [{ translateY: pull - 80 }],
-      opacity: pull > 8 || isRefreshingShared.value ? 1 : 0,
+      opacity: pull > 8 || isRefreshingShared.get() ? 1 : 0,
     };
   });
 
@@ -537,15 +497,15 @@ export default function PersonalScreen() {
     transform: [
       {
         rotate:
-          pullDistance.value > PULL_THRESHOLD ? '180deg' : '0deg',
+          pullDistance.get() > PULL_THRESHOLD ? '180deg' : '0deg',
       },
     ],
-    opacity: isRefreshingShared.value ? 0 : 1,
+    opacity: isRefreshingShared.get() ? 0 : 1,
   }));
 
   // Spinner appears while refreshing
   const refreshSpinnerStyle = useAnimatedStyle(() => ({
-    opacity: isRefreshingShared.value ? 1 : 0,
+    opacity: isRefreshingShared.get() ? 1 : 0,
   }));
 
   /*
@@ -558,7 +518,7 @@ export default function PersonalScreen() {
 
   const changeMonth = useCallback(
     (direction: 'previous' | 'next') => {
-      if (isAnimating.value) {
+      if (isAnimating.get()) {
         return;
       }
 
@@ -566,10 +526,10 @@ export default function PersonalScreen() {
 
       // Never allow navigation into future months.
       if (direction === 'next' && currentOffset >= 0) {
-        translateX.value = withSpring(0, {
+        translateX.set(withSpring(0, {
           damping: 20,
           stiffness: 220,
-        });
+        }));
         return;
       }
 
@@ -578,23 +538,23 @@ export default function PersonalScreen() {
           ? currentOffset - 1
           : Math.min(currentOffset + 1, 0);
 
-      isAnimating.value = true;
+      isAnimating.set(true);
 
       const exitDirection = direction === 'previous' ? -1 : 1;
 
       // First move the currently visible card out.
-      cardOpacity.value = withTiming(0, {
+      cardOpacity.set(withTiming(0, {
         duration: 140,
-      });
+      }));
 
-      translateX.value = withTiming(
+      translateX.set(withTiming(
         exitDirection * CARD_EXIT_DISTANCE,
         {
           duration: 180,
         },
         (finished) => {
           if (!finished) {
-            isAnimating.value = false;
+            isAnimating.set(false);
             return;
           }
 
@@ -604,26 +564,26 @@ export default function PersonalScreen() {
           runOnJS(setMonthOffset)(targetOffset);
 
           // Place the new month's card on the opposite side.
-          translateX.value = -exitDirection * CARD_EXIT_DISTANCE;
+          translateX.set(-exitDirection * CARD_EXIT_DISTANCE);
 
           // Bring the new month into view.
-          translateX.value = withTiming(
+          translateX.set(withTiming(
             0,
             {
               duration: 220,
             },
             (enterFinished) => {
               if (enterFinished) {
-                isAnimating.value = false;
+                isAnimating.set(false);
               }
             },
-          );
+          ));
 
-          cardOpacity.value = withTiming(1, {
+          cardOpacity.set(withTiming(1, {
             duration: 220,
-          });
+          }));
         },
-      );
+      ));
     },
     [monthOffset, translateX, cardOpacity, isAnimating, setMonthOffset],
   );
@@ -642,21 +602,21 @@ export default function PersonalScreen() {
     .activeOffsetX([-10, 10])
     .failOffsetY([-30, 30])
     .onUpdate((event) => {
-      if (isAnimating.value) {
+      if (isAnimating.get()) {
         return;
       }
 
       // When already on the current month, don't allow
       // dragging the card into a future month.
       if (monthOffset >= 0 && event.translationX > 0) {
-        translateX.value = 0;
+        translateX.set(0);
         return;
       }
 
-      translateX.value = event.translationX;
+      translateX.set(event.translationX);
     })
     .onEnd((event) => {
-      if (isAnimating.value) {
+      if (isAnimating.get()) {
         return;
       }
 
@@ -670,10 +630,10 @@ export default function PersonalScreen() {
         Math.abs(velocityX) >= SWIPE_VELOCITY;
 
       if (!distanceReached && !velocityReached) {
-        translateX.value = withSpring(0, {
+        translateX.set(withSpring(0, {
           damping: 20,
           stiffness: 220,
-        });
+        }));
         return;
       }
 
@@ -694,10 +654,10 @@ export default function PersonalScreen() {
         if (monthOffset < 0) {
           runOnJS(changeMonth)('next');
         } else {
-          translateX.value = withSpring(0, {
+          translateX.set(withSpring(0, {
             damping: 20,
             stiffness: 220,
-          });
+          }));
         }
       }
     });
@@ -709,15 +669,15 @@ export default function PersonalScreen() {
    */
 
   const cardAnimatedStyle = useAnimatedStyle(() => {
-    const safeX = Number.isFinite(translateX.value)
+    const safeX = Number.isFinite(translateX.get())
       ? Math.max(
         -CARD_EXIT_DISTANCE,
-        Math.min(CARD_EXIT_DISTANCE, translateX.value),
+        Math.min(CARD_EXIT_DISTANCE, translateX.get()),
       )
       : 0;
 
-    const safeOpacity = Number.isFinite(cardOpacity.value)
-      ? cardOpacity.value
+    const safeOpacity = Number.isFinite(cardOpacity.get())
+      ? cardOpacity.get()
       : 1;
 
     return {
@@ -738,6 +698,10 @@ export default function PersonalScreen() {
   );
 
   const safeMonthTotal = safeNumber(monthTotalPaise);
+  const safeMonthInvestments = safeNumber(monthInvestmentsPaise);
+  const totalOutflow = safeMonthTotal + safeMonthInvestments;
+  const subscriptionDueToday = dueSubscription !== null
+    && new Date(dueSubscription.next_due).toDateString() === new Date().toDateString();
 
   /*
    * ==============================
@@ -747,6 +711,7 @@ export default function PersonalScreen() {
 
   return (
     <SafeAreaView
+      edges={['top', 'left', 'right']}
       style={[
         styles.container,
         {
@@ -767,8 +732,8 @@ export default function PersonalScreen() {
         refreshControl={
           Platform.OS === 'android' ? (
             <RefreshControl
-              refreshing={false}
-              onRefresh={() => { }}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
               colors={['transparent']}
               progressBackgroundColor="transparent"
               // Move the native spinner fully above the viewport
@@ -809,18 +774,18 @@ export default function PersonalScreen() {
 
           <TouchableOpacity
             accessibilityRole="button"
-            accessibilityLabel="Open spending insights"
-            onPress={() => router.push('/insights')}
+            accessibilityLabel="Open investments and SIPs"
+            onPress={() => router.push('/settings/investments')}
             style={[
-              styles.insightsButton,
+              styles.headerActionButton,
               {
                 backgroundColor: colors.primaryLight,
                 borderRadius: borderRadius.full,
               },
             ]}
           >
-            <MaterialIcons name="insights" size={18} color={colors.primary} />
-            <Text style={[styles.insightsButtonText, { color: colors.primary }]}>Insights</Text>
+            <MaterialIcons name="trending-up" size={18} color={colors.primary} />
+            <Text style={[styles.headerActionButtonText, { color: colors.primary }]}>Investments</Text>
           </TouchableOpacity>
 
         </View>
@@ -921,27 +886,64 @@ export default function PersonalScreen() {
                 ))}
               </View>
             )}
+            <View style={styles.outflowDetails}>
+              <View style={styles.outflowRow}>
+                <Text style={styles.outflowLabel}>Investments</Text>
+                <Text style={styles.outflowValue} numberOfLines={1} adjustsFontSizeToFit>{formatPaiseToRupees(safeMonthInvestments)}</Text>
+              </View>
+              <View style={styles.outflowRow}>
+                <Text style={styles.outflowTotalLabel}>Total outflow</Text>
+                <Text style={styles.outflowTotalValue} numberOfLines={1} adjustsFontSizeToFit>{formatPaiseToRupees(totalOutflow)}</Text>
+              </View>
+            </View>
           </Animated.View>
         </GestureDetector>
 
-        {/* =========================
-            DATE FILTER SECTION
-        ========================== */}
-        <View style={styles.filterSection}>
+        <View style={[styles.filterSection, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: borderRadius.xl }]}>
+          <View style={styles.filterHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.filterTitle, { color: colors.text }]}>Find expenses</Text>
+              <Text style={[styles.filterSubtitle, { color: colors.textSecondary }]}>Search and narrow your records</Text>
+            </View>
+            {hasActiveFilter && (
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel="Clear all expense filters" onPress={() => {
+                setDateFilter('all'); setCategoryFilterId(null); setSearch('');
+                setShowDateSelection(false); setShowCategorySelection(false);
+              }} style={[styles.clearAllButton, { backgroundColor: colors.primaryLight }]}>
+                <Text style={[styles.clearFilterText, { color: colors.primary }]}>Clear all</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          <View style={[styles.searchField, { backgroundColor: colors.surfaceVariant }]}>
+            <MaterialIcons name="search" size={21} color={colors.textSecondary} />
+            <TextInput
+              value={search}
+              onChangeText={setSearch}
+              placeholder="Search expenses"
+              placeholderTextColor={colors.textMuted}
+              accessibilityLabel="Search expenses by description, category, payment, or amount"
+              returnKeyType="search"
+              style={[styles.searchInput, { color: colors.text }]}
+            />
+            {search.length > 0 && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Clear search" onPress={() => setSearch('')} hitSlop={10}>
+              <MaterialIcons name="close" size={20} color={colors.textSecondary} />
+            </TouchableOpacity>}
+          </View>
+          <Text style={[styles.filterGroupLabel, { color: colors.textSecondary }]}>DATE</Text>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.filterChipScroll}
           >
             {[
-              { key: 'all' as const, label: 'All Days', icon: 'view-list' as const },
+              { key: 'all' as const, label: 'All dates', icon: 'view-list' as const },
               { key: 'today' as const, label: 'Today', icon: 'today' as const },
               { key: 'yesterday' as const, label: 'Yesterday', icon: 'history' as const },
               {
                 key: 'custom' as const,
                 label: dateFilter === 'custom'
                   ? formatDate(customFilterDate)
-                  : dateFilter === 'range' ? dateFilterInfo.label : 'Pick Date',
+                  : dateFilter === 'range' ? dateFilterInfo.label : 'Choose dates',
                 icon: 'calendar-today' as const,
               },
             ].map((chip) => {
@@ -952,20 +954,22 @@ export default function PersonalScreen() {
                   style={[
                     styles.filterChip,
                     {
-                      backgroundColor: isSelected ? colors.primary : colors.card,
+                      backgroundColor: isSelected ? colors.primary : colors.surfaceVariant,
                       borderColor: isSelected ? colors.primary : colors.border,
-                      borderRadius: borderRadius.lg,
-                      ...shadows.sm,
+                      borderRadius: borderRadius.full,
                     },
                   ]}
                   onPress={() => {
                     if (chip.key === 'custom') {
                       setShowDateSelection((visible) => !visible);
+                      setShowCategorySelection(false);
                     } else {
                       setDateFilter(chip.key);
                       setShowDateSelection(false);
                     }
                   }}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: isSelected }}
                   activeOpacity={0.75}
                 >
                   <MaterialIcons
@@ -984,29 +988,23 @@ export default function PersonalScreen() {
                   >
                     {chip.label}
                   </Text>
-                  {isSelected && chip.key !== 'all' && (
-                    <TouchableOpacity
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        setDateFilter('all');
-                        setShowDateSelection(false);
-                      }}
-                      hitSlop={8}
-                    >
-                      <MaterialIcons name="close" size={14} color="#ffffff" style={{ marginLeft: 2 }} />
-                    </TouchableOpacity>
-                  )}
                 </TouchableOpacity>
               );
             })}
           </ScrollView>
-
-          <Text style={[styles.categoryFilterLabel, { color: colors.textSecondary }]}>CATEGORY</Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.categoryFilterScroll}
-          >
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Category filter: ${selectedCategoryName || 'All categories'}`} accessibilityState={{ expanded: showCategorySelection }} onPress={() => {
+            setShowCategorySelection((visible) => !visible); setShowDateSelection(false);
+          }} style={[styles.categoryPickerButton, { backgroundColor: categoryFilterId ? colors.primaryLight : colors.surfaceVariant }]}>
+            <View style={[styles.categoryPickerIcon, { backgroundColor: categoryFilterId ? colors.primary : colors.card }]}>
+              <MaterialIcons name="category" size={19} color={categoryFilterId ? colors.textInverse : colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.categoryPickerCaption, { color: colors.textSecondary }]}>CATEGORY</Text>
+              <Text numberOfLines={1} style={[styles.categoryPickerValue, { color: colors.text }]}>{selectedCategoryName || 'All categories'}</Text>
+            </View>
+            <MaterialIcons name={showCategorySelection ? 'expand-less' : 'expand-more'} size={23} color={colors.textSecondary} />
+          </TouchableOpacity>
+          {showCategorySelection && <View style={styles.categoryChoices}>
             {[{ id: null, name: 'All categories', icon: 'apps' }, ...expenseCategories.map((category) => ({
               id: category.id,
               name: category.name,
@@ -1015,19 +1013,14 @@ export default function PersonalScreen() {
                 : category.icon || DEFAULT_CATEGORY_METAS[category.name]?.icon || 'category',
             }))].map((category) => {
               const selected = categoryFilterId === category.id;
-              return (
-                <TouchableOpacity
-                  key={category.id || 'all-categories'}
-                  style={[styles.categoryFilterChip, { backgroundColor: selected ? colors.primary : colors.card, borderColor: selected ? colors.primary : colors.border, borderRadius: borderRadius.full }]}
-                  onPress={() => setCategoryFilterId(category.id)}
-                  activeOpacity={0.75}
-                >
-                  <MaterialIcons name={category.icon as any} size={16} color={selected ? '#fff' : colors.primary} />
-                  <Text style={[styles.categoryFilterText, { color: selected ? '#fff' : colors.text }]}>{category.name}</Text>
-                </TouchableOpacity>
-              );
+              return <TouchableOpacity key={category.id || 'all-categories'} accessibilityRole="button" accessibilityState={{ selected }}
+                style={[styles.categoryFilterChip, { backgroundColor: selected ? colors.primary : colors.surfaceVariant, borderColor: selected ? colors.primary : colors.border, borderRadius: borderRadius.full }]}
+                onPress={() => { setCategoryFilterId(category.id); setShowCategorySelection(false); }} activeOpacity={0.75}>
+                <CategoryIcon icon={category.icon} size={17} color={selected ? colors.textInverse : colors.primary} />
+                <Text style={[styles.categoryFilterText, { color: selected ? colors.textInverse : colors.text }]}>{category.name}</Text>
+              </TouchableOpacity>;
             })}
-          </ScrollView>
+          </View>}
 
           {showDateSelection && (
             <View style={[styles.dateSelectionCard, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: borderRadius.md }]}>
@@ -1090,36 +1083,12 @@ export default function PersonalScreen() {
             </View>
           )}
 
-          {/* Active Filter Info Banner */}
-          {(dateFilter !== 'all' || categoryFilterId !== null) && (
-            <View
-              style={[
-                styles.activeFilterBanner,
-                {
-                  backgroundColor: `${colors.primary}12`,
-                  borderColor: `${colors.primary}30`,
-                  borderRadius: borderRadius.md,
-                },
-              ]}
-            >
-              <View style={styles.activeFilterLeft}>
-                <MaterialIcons name="filter-list" size={16} color={colors.primary} />
-                <Text style={[styles.activeFilterText, { color: colors.text }]}>
-                  {dateFilter !== 'all' ? dateFilterInfo.label : 'Filtered'}
-                  {categoryFilterId ? ` · ${selectedCategoryName || 'Category'}` : ''}:{' '}
-                  <Text style={{ fontWeight: '700', color: colors.primary }}>
-                    {filteredExpenses.length} {filteredExpenses.length === 1 ? 'expense' : 'expenses'} · {formatPaiseToRupees(filteredTotalPaise)}
-                  </Text>
-                </Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => setDateFilter('all')}
-                style={styles.clearFilterButton}
-              >
-                <Text style={[styles.clearFilterText, { color: colors.primary }]}>Show All</Text>
-              </TouchableOpacity>
-            </View>
-          )}
+          <View style={[styles.filterResults, { borderTopColor: colors.border }]}>
+            <Text style={[styles.filterResultsCount, { color: colors.textSecondary }]}>
+              {filteredExpenses.length} {filteredExpenses.length === 1 ? 'expense' : 'expenses'}{hasActiveFilter ? ' found' : ''}
+            </Text>
+            <Text style={[styles.filterResultsTotal, { color: colors.primary }]}>{formatPaiseToRupees(filteredTotalPaise)}</Text>
+          </View>
         </View>
 
         {showDatePicker && (
@@ -1234,7 +1203,7 @@ export default function PersonalScreen() {
                     borderRadius: borderRadius.md,
                   },
                 ]}
-                onPress={() => setDateFilter('all')}
+                onPress={() => { setDateFilter('all'); setCategoryFilterId(null); setSearch(''); }}
               >
                 <Text style={styles.emptyActionBtnText}>View All Month Expenses</Text>
               </TouchableOpacity>
@@ -1281,11 +1250,7 @@ export default function PersonalScreen() {
                     },
                   ]}
                 >
-                  <MaterialIcons
-                    name={categoryMeta.icon as any}
-                    size={22}
-                    color={categoryMeta.color}
-                  />
+                  <CategoryIcon icon={categoryMeta.icon} size={22} color={categoryMeta.color} />
                 </View>
 
                 <View style={styles.expenseInfo}>
@@ -1452,6 +1417,82 @@ export default function PersonalScreen() {
 
       )}
 
+      <BackupReminderSnackbar suppressed={undoVisible || dueSubscription !== null} />
+
+      <Modal visible={dueSubscription !== null} transparent animationType="fade">
+        <ScrollView
+          contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: 20, backgroundColor: 'rgba(0, 0, 0, 0.55)' }}
+        >
+          <View style={{ width: '100%', maxWidth: 420, alignSelf: 'center', backgroundColor: colors.card, borderRadius: 24, padding: 24, gap: 20 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <View style={{ width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primaryLight }}>
+                <MaterialIcons name="subscriptions" size={24} color={colors.primary} />
+              </View>
+              <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: '700', letterSpacing: 0.5 }}>SUBSCRIPTION BILL</Text>
+            </View>
+
+            <View style={{ gap: 8 }}>
+              <Text style={{ color: colors.text, fontSize: 24, lineHeight: 30, fontWeight: '700' }}>
+                {dueSubscription?.name}
+              </Text>
+              <View style={{ alignSelf: 'flex-start', borderRadius: 999, backgroundColor: colors.warningBackground, paddingHorizontal: 10, paddingVertical: 5 }}>
+                <Text style={{ color: colors.warning, fontSize: 12, fontWeight: '700' }}>
+                  {subscriptionDueToday ? 'Due today' : 'Overdue'}
+                </Text>
+              </View>
+            </View>
+
+            <View style={{ borderRadius: 16, backgroundColor: colors.surfaceVariant, padding: 18, gap: 10 }}>
+              <View style={{ gap: 4 }}>
+                <Text style={{ color: colors.textSecondary, fontSize: 13 }}>Amount due</Text>
+                <Text style={{ color: colors.text, fontSize: 32, fontWeight: '700' }}>
+                  {dueSubscription && formatPaiseToRupees(dueSubscription.amount)}
+                </Text>
+              </View>
+              <View style={{ height: 1, backgroundColor: colors.divider }} />
+              <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
+                {dueSubscription && `Due ${formatDate(dueSubscription.next_due)}  ·  ${dueSubscription.payment_method}`}
+              </Text>
+            </View>
+
+            <View style={{ gap: 10 }}>
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel="Mark subscription as paid"
+                accessibilityHint="Adds this payment to your expenses and schedules next month's bill"
+                disabled={subscriptionActionPending}
+                onPress={() => { void resolveDueSubscription(confirmSubscriptionPayment); }}
+                style={{ minHeight: 54, flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: colors.primary, opacity: subscriptionActionPending ? 0.65 : 1 }}
+              >
+                <MaterialIcons name="check-circle-outline" size={20} color={colors.textInverse} />
+                <Text style={{ color: colors.textInverse, fontSize: 16, fontWeight: '700' }}>{subscriptionActionPending ? 'Updating…' : 'Mark as paid'}</Text>
+              </TouchableOpacity>
+              <Text style={{ color: colors.textSecondary, fontSize: 12, textAlign: 'center', lineHeight: 17 }}>
+                Adds this payment to your expenses.
+              </Text>
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityHint="Shows this bill again tomorrow"
+                disabled={subscriptionActionPending}
+                onPress={() => { void resolveDueSubscription((item) => remindSubscriptionTomorrow(item.id)); }}
+                style={{ minHeight: 50, alignItems: 'center', justifyContent: 'center', borderRadius: 14, borderWidth: 1, borderColor: colors.border, opacity: subscriptionActionPending ? 0.65 : 1 }}
+              >
+                <Text style={{ color: colors.text, fontWeight: '700' }}>Remind me tomorrow</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityHint="Moves the reminder to next month without adding an expense"
+                disabled={subscriptionActionPending}
+                onPress={() => { void resolveDueSubscription(skipSubscriptionThisMonth); }}
+                style={{ minHeight: 44, alignItems: 'center', justifyContent: 'center', opacity: subscriptionActionPending ? 0.65 : 1 }}
+              >
+                <Text style={{ color: colors.textSecondary, fontWeight: '700' }}>Skip this month</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </ScrollView>
+      </Modal>
+
     </SafeAreaView>
   );
 }
@@ -1508,7 +1549,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  insightsButton: {
+  headerActionButton: {
     minHeight: 40,
     paddingHorizontal: 12,
     flexDirection: 'row',
@@ -1517,7 +1558,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
 
-  insightsButtonText: {
+  headerActionButtonText: {
     fontSize: 13,
     fontWeight: '700',
   },
@@ -1567,6 +1608,24 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
 
+  outflowDetails: {
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.25)',
+    paddingTop: 14,
+    marginTop: 14,
+    gap: 10,
+  },
+  outflowRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
+  },
+  outflowLabel: { color: 'rgba(255,255,255,0.82)', fontSize: 13 },
+  outflowValue: { color: '#ffffff', fontSize: 14, fontWeight: '700', flexShrink: 1, textAlign: 'right' },
+  outflowTotalLabel: { color: '#ffffff', fontSize: 14, fontWeight: '700' },
+  outflowTotalValue: { color: '#ffffff', fontSize: 18, fontWeight: '800', flexShrink: 1, textAlign: 'right' },
+
   /*
    * ==========================
    * CATEGORY BREAKDOWN
@@ -1614,35 +1673,47 @@ const styles = StyleSheet.create({
    */
 
   filterSection: {
-    marginTop: 18,
-    marginBottom: 10,
+    marginTop: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    padding: 16,
+    gap: 12,
   },
+
+  filterHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  filterTitle: { fontSize: 17, fontWeight: '800' },
+  filterSubtitle: { fontSize: 12, marginTop: 2 },
+  clearAllButton: { minHeight: 36, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', borderRadius: 18 },
+  searchField: { minHeight: 48, borderRadius: 12, paddingHorizontal: 13, flexDirection: 'row', alignItems: 'center', gap: 9 },
+  searchInput: { flex: 1, fontSize: 15, paddingVertical: 8 },
+  filterGroupLabel: { fontSize: 11, fontWeight: '800', letterSpacing: 0.8, marginTop: 2 },
 
   filterChipScroll: {
     gap: 8,
     paddingVertical: 2,
-    paddingHorizontal: 2,
   },
 
   filterChip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    minHeight: 40,
+    paddingHorizontal: 13,
     borderWidth: 1,
   },
 
   filterChipText: {
     fontSize: 13,
   },
-  categoryFilterLabel: { marginTop: 10, marginLeft: 4, marginBottom: 6, fontSize: 10, fontWeight: '700', letterSpacing: 0.7 },
-  categoryFilterScroll: { gap: 8, paddingVertical: 2, paddingHorizontal: 2 },
-  categoryFilterChip: { minHeight: 36, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 11, borderWidth: 1 },
-  categoryFilterText: { fontSize: 12, fontWeight: '600' },
+  categoryPickerButton: { minHeight: 58, borderRadius: 13, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 11 },
+  categoryPickerIcon: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  categoryPickerCaption: { fontSize: 10, fontWeight: '800', letterSpacing: 0.8 },
+  categoryPickerValue: { fontSize: 14, fontWeight: '700', marginTop: 2 },
+  categoryChoices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  categoryFilterChip: { minHeight: 40, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, borderWidth: 1 },
+  categoryFilterText: { fontSize: 13, fontWeight: '600' },
 
   dateSelectionCard: {
-    marginTop: 10,
     padding: 12,
     borderWidth: 1,
     gap: 10,
@@ -1662,34 +1733,11 @@ const styles = StyleSheet.create({
   applyDateButton: { minWidth: 80, minHeight: 40, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14 },
   applyDateText: { color: '#fff', fontSize: 13, fontWeight: '700' },
 
-  activeFilterBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    marginTop: 10,
-    borderWidth: 1,
-  },
-
-  activeFilterLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    flex: 1,
-  },
-
-  activeFilterText: {
-    fontSize: 12,
-  },
-
-  clearFilterButton: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-
+  filterResults: { borderTopWidth: 1, paddingTop: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  filterResultsCount: { fontSize: 13, fontWeight: '600' },
+  filterResultsTotal: { fontSize: 15, fontWeight: '800' },
   clearFilterText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '700',
   },
 

@@ -1,3 +1,4 @@
+import { assertValidAmount, validateHotelStay } from '../../utils/validation';
 import { getDatabase } from '../../database/client';
 import { CreateHotelExpenseDTO, HotelExpense, UpdateHotelExpenseDTO } from '../../types/company';
 import { generateUUID } from '../../utils/uuid';
@@ -33,6 +34,9 @@ export class HotelRepository {
   }
 
   async create(data: CreateHotelExpenseDTO): Promise<HotelExpense> {
+    const valid = validateHotelStay(data.start_date, data.end_date, data.no_of_days, data.rate_per_day, data.amount);
+    if (!valid.isValid) throw new Error(valid.error);
+    if (data.food_amount != null) assertValidAmount(data.food_amount, true);
     const db = await getDatabase();
     const id = generateUUID();
     const timestamp = getCurrentTimestamp();
@@ -96,6 +100,9 @@ export class HotelRepository {
     const foodAmount = data.food_amount !== undefined ? data.food_amount : existing.food_amount;
     const amount = data.amount ?? existing.amount;
 
+    const valid = validateHotelStay(startDate, endDate, noOfDays, ratePerDay, amount);
+    if (!valid.isValid) throw new Error(valid.error);
+    if (foodAmount != null) assertValidAmount(foodAmount, true);
     await db.runAsync(
       `UPDATE hotel
        SET employee_id = ?, hotel_name = ?, bill_no = ?, start_date = ?, end_date = ?, no_of_days = ?, rate_per_day = ?, food_amount = ?, amount = ?, complaint_no = ?, updated_at = ?

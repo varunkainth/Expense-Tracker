@@ -10,17 +10,17 @@ const ORIGINAL_DATA = JSON.stringify({
   currency: 'INR',
 });
 
-export function testBackupCrypto(): void {
+export async function testBackupCrypto(): Promise<void> {
   console.log('--- Backup Crypto Test ---');
 
-  const encrypted = encryptBackup(
+  const encrypted = await encryptBackup(
     ORIGINAL_DATA,
     PASSWORD,
   );
 
   console.log('Encrypted:', encrypted);
 
-  const decrypted = decryptBackup(
+  const decrypted = await decryptBackup(
     encrypted,
     PASSWORD,
   );
@@ -34,7 +34,7 @@ export function testBackupCrypto(): void {
   console.log('Correct password: PASS');
 
   try {
-    decryptBackup(
+    await decryptBackup(
       encrypted,
       'WrongPassword123!',
     );

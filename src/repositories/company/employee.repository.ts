@@ -38,10 +38,7 @@ export class EmployeeRepository {
     const id = generateUUID();
     const timestamp = getCurrentTimestamp();
 
-    const mobile_no =
-      data.mobile_no && data.mobile_no.trim().length > 0
-        ? data.mobile_no.trim()
-        : null;
+    const mobile_no = this.requireMobileNumber(data.mobile_no);
 
     await db.runAsync(
       `INSERT INTO employee_details (
@@ -87,14 +84,7 @@ export class EmployeeRepository {
     const department = data.department ?? existing.department;
     const location = data.location ?? existing.location;
 
-    // mobile_no: only overwrite if the field was explicitly provided.
-    // Allow explicit null to clear it.
-    const mobile_no =
-      data.mobile_no === undefined
-        ? existing.mobile_no
-        : data.mobile_no && data.mobile_no.trim().length > 0
-        ? data.mobile_no.trim()
-        : null;
+    const mobile_no = this.requireMobileNumber(data.mobile_no ?? existing.mobile_no);
 
     await db.runAsync(
       `UPDATE employee_details
@@ -119,6 +109,13 @@ export class EmployeeRepository {
   async delete(id: string): Promise<void> {
     const db = await getDatabase();
     await db.runAsync(`DELETE FROM employee_details WHERE id = ?;`, [id]);
+  }
+
+  private requireMobileNumber(value: string | null | undefined): string {
+    if (!value || !/^\d{10}$/.test(value)) {
+      throw new Error('Mobile number is required and must be exactly 10 digits.');
+    }
+    return value;
   }
 }
 

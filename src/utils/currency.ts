@@ -18,7 +18,9 @@ export function rupeesToPaise(rupees: number | string): number {
     throw new Error('Invalid rupee amount');
   }
 
-  return Math.round(num * 100);
+  const paise = Math.round(num * 100);
+  if (!Number.isSafeInteger(paise)) throw new Error('Amount is too large.');
+  return paise;
 }
 
 /**

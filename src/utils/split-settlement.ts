@@ -12,7 +12,7 @@ export function calculateSettlements(
   const owed = new Map(people.map((person) => [person.id, 0]));
 
   for (const expense of expenses) {
-    if (!peopleById.has(expense.paid_by_person_id) || expense.amount <= 0) continue;
+    if (!peopleById.has(expense.paid_by_person_id) || !Number.isSafeInteger(expense.amount) || expense.amount <= 0) continue;
     paid.set(expense.paid_by_person_id, (paid.get(expense.paid_by_person_id) ?? 0) + expense.amount);
 
     const share = Math.floor(expense.amount / people.length);
@@ -48,9 +48,10 @@ export function calculateSettlements(
         to_name: creditor.person.name,
         amount,
       });
-      debtor.balance -= exactAmount;
-      creditor.balance -= exactAmount;
     }
+    // Always consume the exact balance, even when the rounded transfer is zero.
+    debtor.balance -= exactAmount;
+    creditor.balance -= exactAmount;
     if (debtor.balance === 0) debtorIndex += 1;
     if (creditor.balance === 0) creditorIndex += 1;
   }

@@ -287,11 +287,6 @@ const STYLE_CELL_CENTER: CellStyle = {
   border: BORDER_ALL,
 };
 
-const STYLE_CELL_RIGHT: CellStyle = {
-  alignment: { horizontal: 'right', vertical: 'center', wrapText: true },
-  border: BORDER_ALL,
-};
-
 const STYLE_CELL_CURRENCY: CellStyle = {
   alignment: { horizontal: 'right', vertical: 'center', wrapText: true },
   border: BORDER_ALL,
@@ -508,7 +503,7 @@ function applyTotalRow(
 // Sheet 1: LOCAL CON  (Rate column removed → 5 cols A–E)
 // ------------------------------------------------------------
 function buildLocalConSheet(data: ExportData): XLSX.WorkSheet {
-  const { employee, local, period } = data;
+  const { employee, local } = data;
   const COLS = 5;
 
   const rows: (string | number)[][] = [];

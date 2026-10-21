@@ -6,6 +6,7 @@ import {
   upgradeBackupData,
   validateBackupAttachment,
 } from './backup-data';
+import { validateRestorableData } from './backup-validation';
 import {
   doesExpenseRangeOverlapPeriod,
   isDateInExpensePeriod,
@@ -15,6 +16,11 @@ import { calculateSettlements } from '../utils/split-settlement';
 
 function emptyBackupData(): BackupData {
   return {
+    app_preferences: [],
+    recurring_expenses: [],
+    subscriptions: [],
+    investment_plans: [],
+    investment_contributions: [],
     categories: [],
     subcategories: [],
     personal_expenses: [],
@@ -53,6 +59,25 @@ function expectThrows(action: () => unknown, pattern: RegExp, message: string): 
 }
 
 const cases: [string, () => void][] = [
+  ['V10 backups gain empty investment tables', () => {
+    const oldData: Partial<BackupData> = emptyBackupData();
+    delete oldData.investment_plans;
+    delete oldData.investment_contributions;
+    const upgraded = upgradeBackupData(oldData as BackupData, 10);
+    equal(upgraded.investment_plans.length, 0, 'V10 investment plans');
+    equal(upgraded.investment_contributions.length, 0, 'V10 investment contributions');
+  }],
+  ['V11 SIP plans become monthly plans', () => {
+    const oldData = emptyBackupData();
+    oldData.investment_plans = [{ id: 'sip-1', name: 'Index fund', amount: 10000, day_of_month: 5, next_due: 1736035200000, active: 1, created_at: 1735689600000 }];
+    const upgraded = upgradeBackupData(oldData, 11);
+    equal((upgraded.investment_plans[0] as { frequency: string }).frequency, 'monthly', 'V11 SIP frequency');
+  }],
+  ['investment contributions must reference an existing plan', () => {
+    const data = emptyBackupData();
+    data.investment_contributions = [{ id: 'contribution-1', plan_id: 'missing-plan', amount: 10000, due_at: 1735689600000, invested_at: 1735689600000, created_at: 1735689600000 }];
+    expectThrows(() => validateRestorableData(data), /missing investment_plans/, 'orphan contribution');
+  }],
   ['V1 schema upgrade adds current fields and attachment collection', () => {
     const data = {
       ...emptyBackupData(),

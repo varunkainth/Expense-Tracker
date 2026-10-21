@@ -15,20 +15,15 @@ import { useTheme } from '../../hooks/useTheme';
 import { categoryRepository } from '../../repositories/personal/category.repository';
 import { Category, Subcategory } from '../../types/personal';
 import { DEFAULT_CATEGORY_METAS } from '../../constants/categories';
-
-const CATEGORY_ICONS = [
-  'category', 'restaurant', 'movie', 'local-gas-station', 'shopping-basket',
-  'medical-services', 'shopping-bag', 'flight', 'receipt-long', 'subscriptions',
-  'directions-bus', 'home', 'pets', 'school', 'fitness-center', 'work',
-  'devices', 'coffee', 'sell', 'more-horiz',
-] as const;
+import CategoryIcon from '../../components/CategoryIcon';
+import { isEmojiIcon, nextEmojiIcon } from '../../utils/category-icon';
 
 export default function CategoriesSettingsScreen() {
   const { colors, spacing, borderRadius } = useTheme();
   const [categories, setCategories] = useState<Category[]>([]);
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
-  const [selectedIcon, setSelectedIcon] = useState<string>('category');
+  const [selectedIcon, setSelectedIcon] = useState('');
   const [expandedCategoryId, setExpandedCategoryId] = useState<string | null>(null);
   const [subcategories, setSubcategories] = useState<Subcategory[]>([]);
   const [subcategoryName, setSubcategoryName] = useState('');
@@ -45,6 +40,10 @@ export default function CategoriesSettingsScreen() {
       Alert.alert('Category name required', 'Enter a name for this category.');
       return;
     }
+    if (!isEmojiIcon(selectedIcon)) {
+      Alert.alert('Choose one emoji', 'Use your keyboard’s emoji picker to enter a single emoji for this category.');
+      return;
+    }
     if (categories.some((category) => category.name.toLocaleLowerCase() === cleanName.toLocaleLowerCase())) {
       Alert.alert('Already exists', 'A category with this name already exists.');
       return;
@@ -54,7 +53,7 @@ export default function CategoriesSettingsScreen() {
     try {
       await categoryRepository.create({ name: cleanName, icon: selectedIcon });
       setName('');
-      setSelectedIcon('category');
+      setSelectedIcon('');
       await loadCategories();
     } catch (error) {
       console.error('Could not add category:', error);
@@ -121,7 +120,7 @@ export default function CategoriesSettingsScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <ScrollView contentContainerStyle={{ padding: spacing.base, gap: 18 }}>
+      <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: spacing.base, gap: 18 }}>
         <Text style={[styles.description, { color: colors.textSecondary }]}>Create categories for your personal expenses. Frequently used categories move to the front of the expense form automatically.</Text>
         <View style={[styles.addCard, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: borderRadius.lg }]}>
           <TextInput
@@ -130,23 +129,24 @@ export default function CategoriesSettingsScreen() {
             placeholder="Category name"
             placeholderTextColor={colors.textMuted}
             maxLength={32}
-            returnKeyType="done"
-            onSubmitEditing={addCategory}
+            returnKeyType="next"
             style={[styles.input, { color: colors.text, borderColor: colors.border, borderRadius: borderRadius.md }]}
           />
-          <Text style={[styles.subcategoryHeading, { color: colors.textSecondary }]}>CHOOSE AN ICON</Text>
-          <View style={styles.iconGrid}>
-            {CATEGORY_ICONS.map((icon) => (
-              <TouchableOpacity
-                key={icon}
-                accessibilityRole="button"
-                accessibilityLabel={`${icon} icon`}
-                onPress={() => setSelectedIcon(icon)}
-                style={[styles.iconOption, { borderColor: selectedIcon === icon ? colors.primary : colors.border, backgroundColor: selectedIcon === icon ? colors.primaryLight : colors.background, borderRadius: borderRadius.md }]}
-              >
-                <MaterialIcons name={icon as any} size={20} color={selectedIcon === icon ? colors.primary : colors.textSecondary} />
-              </TouchableOpacity>
-            ))}
+          <Text style={[styles.subcategoryHeading, { color: colors.textSecondary }]}>CATEGORY EMOJI</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <TextInput
+              value={selectedIcon}
+              onChangeText={(value) => setSelectedIcon((current) => nextEmojiIcon(current, value))}
+              placeholder="🙂"
+              placeholderTextColor={colors.textMuted}
+              maxLength={24}
+              autoCorrect={false}
+              accessibilityLabel="Category emoji"
+              style={[styles.emojiInput, { color: colors.text, borderColor: colors.border, borderRadius: borderRadius.md }]}
+            />
+            <Text style={{ flex: 1, color: colors.textSecondary, fontSize: 13, lineHeight: 19 }}>
+              Tap the field and choose one emoji from your keyboard.
+            </Text>
           </View>
           <TouchableOpacity onPress={addCategory} disabled={saving} style={[styles.addButton, { backgroundColor: colors.primary, borderRadius: borderRadius.md, opacity: saving ? 0.6 : 1 }]}>
             <MaterialIcons name="add" size={20} color="#fff" />
@@ -158,10 +158,8 @@ export default function CategoriesSettingsScreen() {
             <View key={category.id}>
             <View style={[styles.row, index > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.divider }]}>
               <View style={[styles.categoryIcon, { backgroundColor: colors.primaryLight }]}>
-                <MaterialIcons
-                  name={((category.is_default === 1
-                    ? DEFAULT_CATEGORY_METAS[category.name]?.icon
-                    : category.icon) || 'category') as any}
+                <CategoryIcon
+                  icon={(category.is_default === 1 ? DEFAULT_CATEGORY_METAS[category.name]?.icon : category.icon) || 'category'}
                   size={18}
                   color={colors.primary}
                 />
@@ -220,8 +218,7 @@ const styles = StyleSheet.create({
   input: { height: 48, borderWidth: 1, paddingHorizontal: 12, fontSize: 15 },
   addButton: { minHeight: 46, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
   addButtonText: { color: '#fff', fontWeight: '700', fontSize: 14 },
-  iconGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  iconOption: { width: 38, height: 38, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  emojiInput: { width: 64, height: 56, borderWidth: 1, fontSize: 28, textAlign: 'center' },
   list: { borderWidth: 1, overflow: 'hidden' },
   row: { minHeight: 58, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, gap: 12 },
   categoryIcon: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },

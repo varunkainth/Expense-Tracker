@@ -14,10 +14,8 @@ export class AuthService {
   }
 
   static async authenticate(promptMessage = 'Authenticate to authorize payment'): Promise<boolean> {
-    const hasHardware = await this.hasHardwareSupport();
-    const isEnrolled = await this.isEnrolled();
-
-    if (!hasHardware || !isEnrolled) {
+    const level = await LocalAuthentication.getEnrolledLevelAsync();
+    if (level === LocalAuthentication.SecurityLevel.NONE) {
       return false;
     }
 

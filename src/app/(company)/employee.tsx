@@ -19,7 +19,7 @@ import { EmployeeDetails } from '../../types/company';
 import { validateRequiredText } from '../../utils/validation';
 
 export default function EmployeeScreen() {
-  const { colors, spacing, borderRadius, shadows } = useTheme();
+  const { colors, spacing, borderRadius } = useTheme();
   const router = useRouter();
 
   const [existingEmployee, setExistingEmployee] = useState<EmployeeDetails | null>(null);
@@ -83,10 +83,8 @@ export default function EmployeeScreen() {
       return;
     }
 
-    // Mobile is optional — but if provided, sanity-check it's digits only.
-    const trimmedMobile = mobileNo.trim();
-    if (trimmedMobile.length > 0 && !/^\d{6,15}$/.test(trimmedMobile)) {
-      Alert.alert('Validation Error', 'Mobile number must be 6–15 digits.');
+    if (!/^\d{10}$/.test(mobileNo)) {
+      Alert.alert('Validation Error', 'Mobile number is required and must be exactly 10 digits.');
       return;
     }
 
@@ -99,7 +97,7 @@ export default function EmployeeScreen() {
           grade: grade.trim(),
           department: department.trim(),
           location: location.trim(),
-          mobile_no: trimmedMobile.length > 0 ? trimmedMobile : null,
+          mobile_no: mobileNo,
         });
         Alert.alert('Success', 'Employee details updated successfully.');
       } else {
@@ -109,7 +107,7 @@ export default function EmployeeScreen() {
           grade: grade.trim(),
           department: department.trim(),
           location: location.trim(),
-          mobile_no: trimmedMobile.length > 0 ? trimmedMobile : null,
+          mobile_no: mobileNo,
         });
         Alert.alert('Success', 'Employee profile created successfully.');
       }
@@ -214,7 +212,7 @@ export default function EmployeeScreen() {
             </View>
 
             <View style={styles.fieldGroup}>
-              <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Mobile Number</Text>
+              <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Mobile Number *</Text>
               <TextInput
                 style={[
                   styles.textInput,
@@ -223,10 +221,12 @@ export default function EmployeeScreen() {
                 placeholder="e.g. 9876543210"
                 placeholderTextColor={colors.textMuted}
                 value={mobileNo}
-                onChangeText={setMobileNo}
-                keyboardType="phone-pad"
-                maxLength={15}
+                onChangeText={(value) => setMobileNo(value.replace(/\D/g, '').slice(0, 10))}
+                keyboardType="number-pad"
+                maxLength={10}
+                accessibilityLabel="Mobile number, 10 digits required"
               />
+              <Text style={{ color: colors.textSecondary, fontSize: 12 }}>Enter exactly 10 digits.</Text>
             </View>
           </View>
         </ScrollView>

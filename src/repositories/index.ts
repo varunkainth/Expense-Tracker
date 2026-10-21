@@ -1,6 +1,7 @@
 // Personal Repositories
 export * from './personal/category.repository';
 export * from './personal/expense.repository';
+export * from './subscription.repository';
 
 // Company Repositories
 export * from './company/employee.repository';

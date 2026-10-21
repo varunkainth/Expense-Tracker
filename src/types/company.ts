@@ -23,7 +23,7 @@ export interface CreateEmployeeDTO {
   name: string;
   employee_code: string;
   grade: string;
-  mobile_no?: string | null;
+  mobile_no: string;
   department: string;
   location: string;
 }
@@ -32,7 +32,7 @@ export interface UpdateEmployeeDTO {
   name?: string;
   employee_code?: string;
   grade?: string;
-  mobile_no?: string | null;
+  mobile_no?: string;
   department?: string;
   location?: string;
 }

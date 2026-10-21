@@ -47,8 +47,8 @@ export default function DailyAllowanceScreen() {
   const [endDate, setEndDate] = useState<number>(todayMidnight);
 
   const noOfDays = useMemo(() => {
-    const n = parseInt(noOfDaysStr, 10);
-    return Number.isFinite(n) && n > 0 ? n : 0;
+    const n = /^\d+$/.test(noOfDaysStr.trim()) ? Number(noOfDaysStr) : 0;
+    return Number.isSafeInteger(n) && n > 0 ? n : 0;
   }, [noOfDaysStr]);
 
   const previewTravel = rates.TRAVEL_ALLOWANCE_PAISE * noOfDays;

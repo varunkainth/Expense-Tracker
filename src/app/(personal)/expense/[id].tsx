@@ -1,6 +1,5 @@
 import React, {
   useCallback,
-  useEffect,
   useState,
 } from 'react';
 
@@ -49,11 +48,7 @@ import {
 import {
   DEFAULT_CATEGORY_METAS,
 } from '../../../constants/categories';
-
-type MaterialIconName =
-  React.ComponentProps<
-    typeof MaterialIcons
-  >['name'];
+import CategoryIcon from '../../../components/CategoryIcon';
 
 const FALLBACK_CATEGORY = 'Other';
 
@@ -387,7 +382,7 @@ const handleEdit = () => {
     DEFAULT_CATEGORY_METAS[expense.category_name || FALLBACK_CATEGORY]
       ? meta.icon
       : expense.category_icon || meta.icon
-  ) as MaterialIconName;
+  );
 
   return (
     <SafeAreaView
@@ -438,11 +433,7 @@ const handleEdit = () => {
               },
             ]}
           >
-            <MaterialIcons
-              name={iconName}
-              size={36}
-              color={meta.color}
-            />
+            <CategoryIcon icon={iconName} size={36} color={meta.color} />
           </View>
 
           <Text
@@ -576,12 +567,18 @@ const handleEdit = () => {
             ) : null}
           </View>
         </View>
-
         {/* Actions */}
         <View
           style={styles.actionsRow}
         >
-          <TouchableOpacity
+        <TouchableOpacity
+          onPress={() => router.push({ pathname: '/(personal)/add-expense', params: { duplicateId: expense.id } })}
+          disabled={deleting}
+          accessibilityRole="button"
+          style={{ padding: 16, borderRadius: 12, backgroundColor: colors.surfaceVariant, marginBottom: 12 }}>
+          <Text style={{ color: colors.primary, fontWeight: '700', textAlign: 'center' }}>Duplicate for today</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
             style={[
               styles.actionBtn,
               {

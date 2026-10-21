@@ -1,5 +1,5 @@
 import { MaterialIcons } from '@expo/vector-icons';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Modal,
@@ -67,17 +67,6 @@ export default function AttendanceExtrasDialog({
 
   const totalDays = useMemo(() => daysInMonth(period), [period]);
   const sundays = useMemo(() => sundaysOf(period), [period]);
-
-  // Reset on open
-  useEffect(() => {
-    if (visible) {
-      setGoogleReviews('');
-      setServiceCallsTat('');
-      setSaturdayOff('none');
-      setHolidayDays([]);
-      setAbsentDays([]);
-    }
-  }, [visible]);
 
   const toggleIn = (arr: number[], set: (v: number[]) => void, day: number) => {
     set(arr.includes(day) ? arr.filter((d) => d !== day) : [...arr, day].sort((a, b) => a - b));

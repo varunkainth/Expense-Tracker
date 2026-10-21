@@ -1,3 +1,4 @@
+import { assertValidAmount, assertValidTimestamp } from '../../utils/validation';
 import { getDatabase } from '../../database/client';
 import {
   CreateMiscellaneousExpenseDTO,
@@ -37,6 +38,8 @@ export class MiscellaneousRepository {
   }
 
   async create(data: CreateMiscellaneousExpenseDTO): Promise<MiscellaneousExpense> {
+    assertValidAmount(data.amount);
+    assertValidTimestamp(data.date);
     const db = await getDatabase();
     const id = generateUUID();
     const timestamp = getCurrentTimestamp();
@@ -86,6 +89,8 @@ export class MiscellaneousRepository {
     const billNo = data.bill_no ?? existing.bill_no;
     const amount = data.amount ?? existing.amount;
 
+    assertValidAmount(amount);
+    assertValidTimestamp(date);
     await db.runAsync(
       `UPDATE miscellaneous_expense
        SET employee_id = ?, date = ?, particulars = ?, bill_no = ?, amount = ?, complaint_no = ?, updated_at = ?

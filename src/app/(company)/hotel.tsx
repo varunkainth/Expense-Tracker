@@ -1,5 +1,5 @@
 import { MaterialIcons } from '@expo/vector-icons';
-import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import {
@@ -95,13 +95,8 @@ export default function HotelScreen() {
     }, [loadData])
   );
 
-  const onStartDateChange = (
-    event: DateTimePickerEvent,
-    selected?: Date
-  ) => {
+  const onStartDateChange = (_event: unknown, selected: Date) => {
     if (Platform.OS !== 'ios') setShowStartPicker(false);
-    if (event.type === 'dismissed') return;
-    if (!selected) return;
 
     const ts = normalizeToMidnight(selected);
     setStartDate(ts);
@@ -111,13 +106,8 @@ export default function HotelScreen() {
     }
   };
 
-  const onEndDateChange = (
-    event: DateTimePickerEvent,
-    selected?: Date
-  ) => {
+  const onEndDateChange = (_event: unknown, selected: Date) => {
     if (Platform.OS !== 'ios') setShowEndPicker(false);
-    if (event.type === 'dismissed') return;
-    if (!selected) return;
 
     const ts = normalizeToMidnight(selected);
     // Ensure check-out is at least 1 night after check-in
@@ -163,13 +153,20 @@ export default function HotelScreen() {
 
     const days = derivedDays;
 
-    const ratePaise = ratePerDayStr ? rupeesToPaise(ratePerDayStr) : 0;
+    let ratePaise: number;
+    let foodPaise: number;
+    try {
+      ratePaise = ratePerDayStr ? rupeesToPaise(ratePerDayStr) : 0;
+      foodPaise = foodAmountStr ? rupeesToPaise(foodAmountStr) : 0;
+    } catch (error) {
+      Alert.alert('Invalid amount', error instanceof Error ? error.message : 'Enter a valid amount.');
+      return;
+    }
     if (!Number.isFinite(ratePaise) || ratePaise <= 0) {
       Alert.alert('Validation Error', 'Rate per day must be greater than ₹0.');
       return;
     }
 
-    const foodPaise = foodAmountStr ? rupeesToPaise(foodAmountStr) : 0;
     if (!Number.isFinite(foodPaise) || foodPaise < 0) {
       Alert.alert('Validation Error', 'Food amount cannot be negative.');
       return;
@@ -402,7 +399,7 @@ export default function HotelScreen() {
                   value={new Date(startDate)}
                   mode="date"
                   display={Platform.OS === 'ios' ? 'inline' : 'default'}
-                  onChange={onStartDateChange}
+                  onValueChange={onStartDateChange}
                   onDismiss={() => setShowStartPicker(false)}
                   maximumDate={new Date()}
                 />
@@ -413,7 +410,7 @@ export default function HotelScreen() {
                   value={new Date(endDate)}
                   mode="date"
                   display={Platform.OS === 'ios' ? 'inline' : 'default'}
-                  onChange={onEndDateChange}
+                  onValueChange={onEndDateChange}
                   onDismiss={() => setShowEndPicker(false)}
                   minimumDate={new Date(startDate + ONE_DAY_MS)}
                 />

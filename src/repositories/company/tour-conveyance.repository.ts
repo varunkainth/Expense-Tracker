@@ -1,3 +1,4 @@
+import { assertValidAmount, assertValidTimestamp } from '../../utils/validation';
 import { getDatabase } from '../../database/client';
 import {
   CreateTourConveyanceDTO,
@@ -37,6 +38,8 @@ export class TourConveyanceRepository {
   }
 
   async create(data: CreateTourConveyanceDTO): Promise<TourConveyance> {
+    assertValidAmount(data.fare);
+    assertValidTimestamp(data.date);
     const db = await getDatabase();
     const id = generateUUID();
     const timestamp = getCurrentTimestamp();
@@ -89,6 +92,8 @@ export class TourConveyanceRepository {
     const mode = data.mode ?? existing.mode;
     const fare = data.fare ?? existing.fare;
 
+    assertValidAmount(fare);
+    assertValidTimestamp(date);
     await db.runAsync(
       `UPDATE tour_conveyance
        SET employee_id = ?, date = ?, from_location = ?, to_location = ?, mode = ?, fare = ?, complaint_no = ?, updated_at = ?
