@@ -1,0 +1,20 @@
+import { ArrowRight, CircleDollarSign, ReceiptText, ShieldCheck, Smartphone, Wallet } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { formatMoney } from '@expense-tracker/shared';
+import { PageHeader } from '../../../components/ui/page-header';
+import { StatCard } from '../../../components/ui/stat-card';
+import { useExpenses } from '../../expenses/hooks/use-expenses';
+export function DashboardPage() {
+    const { expenses, categories, pendingCount, loading } = useExpenses();
+    const now = new Date();
+    const month = expenses.filter((expense) => { const date = new Date(expense.expense_date); return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear(); });
+    const total = month.reduce((sum, expense) => sum + expense.amount, 0);
+    const breakdown = categories.map((category) => ({ ...category, amount: month.filter((expense) => expense.category_id === category.id).reduce((sum, expense) => sum + expense.amount, 0) })).filter((item) => item.amount > 0).sort((a, b) => b.amount - a.amount);
+    return <><PageHeader eyebrow="A LITTLE MORE CLARITY" title="Your money, at a glance." description={now.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }) + ' · Your personal spending overview'} action={<Link className="primary-button" to="/expenses">Manage expenses<ArrowRight size={17}/></Link>}/>
+    {!loading && <p className="muted">{expenses.length} personal expenses saved across all dates. This overview shows the current month. <Link className="text-link" to="/expenses">View all personal expenses</Link></p>}
+    <section className="welcome-card"><div><span className="pill"><ShieldCheck size={14}/>LOCAL-FIRST WORKSPACE</span><h2>A calmer way to<br />keep track.</h2><p>Your everyday expenses, together in one place.<br />Start here, with records saved in your browser.</p></div><div className="welcome-art" aria-hidden="true"><div className="art-card"><Wallet size={30}/><span>YOUR MONEY</span><strong>Your control.</strong><div className="art-lines"><i /><i /><i /></div></div><span className="art-orbit"><ShieldCheck size={25}/></span></div></section>
+    <div className="stats-grid"><StatCard label="Spent this month" value={loading ? '—' : formatMoney(total)} detail="Personal expenses recorded here" icon={<Wallet size={20}/>}/><StatCard label="Transactions" value={loading ? '—' : String(month.length)} detail="In the current calendar month" icon={<ReceiptText size={20}/>}/><StatCard label="Average expense" value={loading ? '—' : formatMoney(month.length ? Math.round(total / month.length) : 0)} detail="Per transaction this month" icon={<CircleDollarSign size={20}/>}/></div>
+    <div className="dashboard-grid"><section className="panel"><div className="section-heading"><h2>Spending by category</h2><span className="muted text-small">This month</span></div>{loading ? <p className="loading">Loading records…</p> : !breakdown.length ? <div className="empty-state"><span className="empty-icon"><ReceiptText size={26}/></span><h3>Your story starts here.</h3><p>Record an expense to discover your spending patterns.</p><Link className="text-link" to="/expenses">Add your first expense <ArrowRight size={15}/></Link></div> : <div className="category-list">{breakdown.map((item) => <div key={item.id}><div className="category-line"><strong>{item.name}</strong><span>{formatMoney(item.amount)}</span></div><div className="progress-track"><span style={{ width: `${item.amount / total * 100}%` }}/></div></div>)}</div>}</section>
+    <section className="connect-card"><span className="empty-icon"><Smartphone size={25}/></span><p className="eyebrow">A CONNECTED WORKSPACE</p><h2>Phone meets desktop.</h2><p>Connect your phone to import personal expenses. Edit imported records in the mobile app.</p><div className="pending-note">{pendingCount} local {pendingCount === 1 ? 'change' : 'changes'} queued · Browser-to-phone sync not enabled</div><Link className="text-link" to="/connect">About phone sync <ArrowRight size={15}/></Link></section></div>
+  </>;
+}

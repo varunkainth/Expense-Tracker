@@ -1,0 +1,26 @@
+{
+  "name": "expense-tracker-web",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:frontend": "bun run --cwd frontend dev",
+    "dev:backend": "bun run --cwd backend dev",
+    "typecheck": "bun run --filter \"@expense-tracker/*\" typecheck",
+    "lint": "eslint frontend/src backend/src packages/shared/src",
+    "test": "bun test backend/tests packages/shared/tests frontend/tests",
+    "build": "bun run --cwd frontend build && bun run --cwd backend build"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.3",
+    "eslint": "^9.0.0",
+    "@eslint/js": "^9.0.0",
+    "eslint-plugin-react-hooks": "^7.0.0",
+    "globals": "^16.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0"
+  }
+}

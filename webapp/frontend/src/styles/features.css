@@ -1,0 +1,59 @@
+.sidebar-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.sidebar-navigation { flex: 1; min-height: 0; overflow-y: auto; margin: 22px -8px 16px 0; padding-right: 8px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.sidebar .nav-group { margin-bottom: 22px; }
+.sidebar .nav-heading { margin: 15px 12px 10px; font-size: 9px; font-weight: 700; letter-spacing: 1.3px; text-transform: uppercase; }
+.sidebar .nav-link { font-size: 12px; padding: 10px 12px; gap: 11px; margin-bottom: 3px; }
+.nav-link svg { flex-shrink: 0; }
+.sidebar-footer { flex-shrink: 0; }
+.mobile-menu-toggle { display: none; }
+.topbar-controls { display: flex; align-items: center; gap: 16px; }
+.theme-selector { display: flex; border: 0; padding: 0; margin: 25px 0; gap: 16px; }
+.theme-choice { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px 38px; border: 1px solid var(--border); border-radius: 12px; color: var(--muted); background: var(--surface); cursor: pointer; }
+.theme-choice input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.theme-choice:has(input:focus-visible) { outline: 3px solid var(--focus); outline-offset: 3px; }
+.theme-choice.selected { color: var(--accent-text); background: var(--surface-muted); border-color: var(--primary); }
+.theme-selector.compact { margin: 0; gap: 3px; padding: 3px; border: 1px solid var(--border); border-radius: 9px; }
+.compact .theme-choice { width: 30px; height: 30px; padding: 0; border: 0; border-radius: 6px; }
+.appearance-panel { padding: 32px; }
+.appearance-panel h2 { font-size: 22px; margin-bottom: 9px; }
+.appearance-panel > .muted { font-size: 12px; }
+.theme-status { font-size: 13px; margin-bottom: 10px; color: var(--accent-text); }
+.theme-preview-content { display: flex; justify-content: space-between; align-items: center; padding: 26px; }
+.theme-preview-content h3 { margin: 8px 0 10px; }
+.theme-preview > p { padding: 0 26px 22px; }
+.feature-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.feature-card { display: block; border: 1px solid var(--border); border-radius: 13px; padding: 23px; background: var(--surface); }
+.feature-card:hover { border-color: var(--primary); background: var(--surface-muted); }
+.feature-card-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; color: var(--muted); }
+.feature-card h3 { font-size: 15px; }
+.feature-card p { color: var(--muted); font-size: 12px; margin: 9px 0 18px; line-height: 1.8; }
+.module-status { display: inline-block; font-size: 10px; color: var(--accent-text); background: var(--surface-muted); padding: 5px 8px; border-radius: 5px; }
+.module-intro { color: var(--muted); font-size: 12px; margin-bottom: 25px; }
+.settings-group { margin-bottom: 32px; }
+.settings-group > h2 { margin-bottom: 18px; }
+.module-empty { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 45px 25px; gap: 18px; }
+.module-empty .empty-icon { margin: 0; }
+.module-empty h2 { font-size: 25px; }
+.module-empty > p { max-width: 510px; line-height: 1.9; color: var(--muted); font-size: 13px; }
+.module-empty .text-link { margin-top: 12px; }
+@media (max-width: 1100px) { .feature-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 800px) {
+  .mobile-menu-toggle { display: inline-flex; }
+  .sidebar .sidebar-navigation { display: none; margin: 18px 0 0; padding: 0; max-height: min(55vh, 500px); overflow-y: auto; }
+  .sidebar .sidebar-navigation.is-open { display: block; }
+  .sidebar .nav-group { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-bottom: 14px; }
+  .sidebar .nav-heading { display: block; grid-column: 1/-1; margin: 10px 12px; }
+  .sidebar .nav-link { white-space: normal; }
+  .topbar-controls { gap: 8px; }
+  .topbar { height: 60px; }
+}
+@media (max-width: 560px) {
+  .feature-grid { grid-template-columns: 1fr; }
+  .topbar > span:first-child { display: none; }
+  .topbar { justify-content: flex-end; }
+  .theme-choice { padding: 20px; flex: 1; }
+  .theme-selector { gap: 10px; }
+  .appearance-panel { padding: 23px; }
+  .feature-card { padding: 21px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
