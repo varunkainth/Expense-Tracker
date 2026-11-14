@@ -1,0 +1,11 @@
+**
+!webapp/
+!webapp/**
+!packages/
+!packages/**
+**/node_modules
+**/dist
+**/.env
+**/.env.*
+**/.git
+**/*.log

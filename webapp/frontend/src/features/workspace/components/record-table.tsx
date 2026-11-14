@@ -1,0 +1,19 @@
+import { useState, type ReactNode } from 'react';
+import { Download, Search } from 'lucide-react';
+import { label, display, rowDate, sumMoney, csv, download } from '../lib/format';
+import { formatMoney } from '@expense-tracker/shared';
+import type { WorkspaceRow } from '../hooks/use-workspace';
+export function RecordTable({ title, rows, fields, lookup, extra }: { title: string; rows: WorkspaceRow[]; fields: string[]; lookup?: (row: WorkspaceRow, field: string) => string | undefined; extra?: (row: WorkspaceRow) => ReactNode }) {
+  const [query, setQuery] = useState(''), [month, setMonth] = useState(''), [page, setPage] = useState(0);
+  const monthParts = month.split('-').map(Number);
+  const monthStart = month ? new Date(monthParts[0], monthParts[1] - 1, 1).getTime() : 0;
+  const monthEnd = month ? new Date(monthParts[0], monthParts[1], 1).getTime() : 0;
+  const filtered = rows.filter((row) => (!query || Object.values(row).some((value) => String(value ?? '').toLowerCase().includes(query.toLowerCase())) || fields.some((field) => lookup?.(row, field)?.toLowerCase().includes(query.toLowerCase()))) && (!month || (rowDate(row) < monthEnd && Number(row.end_date ?? rowDate(row)) >= monthStart))).sort((a, b) => rowDate(b) - rowDate(a));
+  const money = fields.some((field) => ['amount','fare','total_amount'].includes(field));
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(filtered.length / 50) - 1));
+  return <section className="panel workspace-records"><div className="section-heading"><div><h2>{title} <span className="count">{filtered.length}</span></h2>{money && <p className="muted">Total {formatMoney(sumMoney(filtered))}</p>}</div><button className="secondary-button" disabled={!filtered.length} onClick={() => download(`${title.toLowerCase().replace(/\W+/g, '-')}.csv`, csv(filtered, fields), 'text/csv;charset=utf-8')}><Download size={15} />Export CSV</button></div>
+    <div className="workspace-filters"><label className="search"><Search size={16} /><input aria-label={`Search ${title}`} placeholder="Search records…" value={query} onChange={(event) => { setQuery(event.target.value); setPage(0); }} /></label><label>Month<input type="month" value={month} onChange={(event) => { setMonth(event.target.value); setPage(0); }} /></label>{month && <button className="text-button" onClick={() => setMonth('')}>All dates</button>}</div>
+    {!filtered.length ? <div className="workspace-empty"><h3>{rows.length ? 'No matching records' : 'No records received yet'}</h3><p>{rows.length ? 'Clear the search or month filter.' : 'Keep the phone unlocked and connected to transfer this dataset.'}</p></div> : <><div className="table-scroll"><table><caption className="sr-only">{title}, read-only phone records</caption><thead><tr>{fields.map((field) => <th key={field}>{label(field)}</th>)}<th>Details</th></tr></thead><tbody>{filtered.slice(currentPage * 50, (currentPage + 1) * 50).map((row) => <tr key={`${row.sourceDevice}:${row.id ?? row.key}`}>
+      {fields.map((field) => <td key={field}>{lookup?.(row, field) ?? display(row[field], field)}</td>)}<td><details><summary>View</summary><dl className="record-details">{Object.entries(row).filter(([field]) => !['content_base64','sha256','sourceDevice'].includes(field)).map(([field, value]) => <div key={field}><dt>{label(field)}</dt><dd>{lookup?.(row, field) ?? display(value, field)}</dd></div>)}</dl>{extra?.(row)}</details></td></tr>)}</tbody></table></div><div className="workspace-pagination"><button className="text-button" disabled={!currentPage} onClick={() => setPage(currentPage - 1)}>Previous</button><span>Page {currentPage + 1} of {Math.ceil(filtered.length / 50)}</span><button className="text-button" disabled={(currentPage + 1) * 50 >= filtered.length} onClick={() => setPage(currentPage + 1)}>Next</button></div></>}
+  </section>;
+}

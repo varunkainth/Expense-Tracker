@@ -1,0 +1,46 @@
+import { expect, test } from 'bun:test';
+import { PairingService } from '../src/modules/pairing/pairing.service';
+test('relay expires ciphertext, rejects older sequences and cannot acknowledge a newer snapshot accidentally', () => {
+  let now = 1800000000000;
+  const service = new PairingService({ pairingTtlMs: 300000, linkedTtlMs: 3600000, presenceTtlMs: 60000, maxSessions: 2, now: () => now });
+  const session = service.create('Browser');
+  const phone = service.claim(session.sessionId, { claimToken: session.qr.claimToken, phoneDeviceId: crypto.randomUUID(), phoneName: 'Phone' });
+  service.approve(session.sessionId, phone.phoneToken, phone.verificationCode);
+  service.confirm(session.sessionId, session.browserToken, phone.verificationCode);
+  const ciphertext = Buffer.alloc(30).toString('base64');
+  service.publishTransfer(session.sessionId, phone.phoneToken, { sequence: 1, ciphertext });
+  service.publishTransfer(session.sessionId, phone.phoneToken, { sequence: 2, ciphertext });
+  service.acknowledgeTransfer(session.sessionId, session.browserToken, 1);
+  expect(service.receiveTransfer(session.sessionId, session.browserToken).envelope?.sequence).toBe(2);
+  expect(service.transferReceipt(session.sessionId, phone.phoneToken).acknowledgedSequence).toBe(0);
+  expect(() => service.publishTransfer(session.sessionId, phone.phoneToken, { sequence: 1, ciphertext })).toThrow('out of date');
+  now += 120001; service.prune();
+  expect(service.receiveTransfer(session.sessionId, session.browserToken).envelope).toBeNull();
+  // A sender can retry the current snapshot after relay expiry without losing the link.
+  service.publishTransfer(session.sessionId, phone.phoneToken, { sequence: 2, ciphertext });
+  expect(service.receiveTransfer(session.sessionId, session.browserToken).envelope?.sequence).toBe(2);
+  expect(() => service.publishTransfer(session.sessionId, phone.phoneToken, { sequence: 3, ciphertext: 'plaintext expenses' })).toThrow();
+  expect(() => service.publishTransfer(session.sessionId, phone.phoneToken, { sequence: 3, ciphertext: 'A'.repeat(750004) })).toThrow();
+});
+test('diagnostic events distinguish upload, empty queues and durable import without logging secrets', () => {
+  const events: import('../src/modules/pairing/pairing.service').PairingEvent[] = [];
+  const service = new PairingService({ pairingTtlMs: 300000, linkedTtlMs: 3600000, presenceTtlMs: 60000, maxSessions: 2, onEvent: (event) => { events.push(event); } });
+  const session = service.create('Private browser label');
+  const phone = service.claim(session.sessionId, { claimToken: session.qr.claimToken, phoneDeviceId: crypto.randomUUID(), phoneName: 'Private phone label' });
+  service.approve(session.sessionId, phone.phoneToken, phone.verificationCode);
+  service.confirm(session.sessionId, session.browserToken, phone.verificationCode);
+  service.receiveTransfer(session.sessionId, session.browserToken);
+  service.receiveTransfer(session.sessionId, session.browserToken);
+  expect(events.filter((event) => event.event === 'transfer_queue_empty')).toHaveLength(1);
+  expect(events.at(-1)?.reason).toBe('not_uploaded');
+  const ciphertext = Buffer.alloc(30).toString('base64');
+  service.publishTransfer(session.sessionId, phone.phoneToken, { sequence: 1, ciphertext });
+  service.receiveTransfer(session.sessionId, session.browserToken);
+  service.acknowledgeTransfer(session.sessionId, session.browserToken, 1, 0);
+  service.receiveTransfer(session.sessionId, session.browserToken);
+  expect(events.find((event) => event.event === 'transfer_uploaded')?.ciphertextBytes).toBe(30);
+  expect(events.find((event) => event.event === 'browser_import_acknowledged')?.expenseCount).toBe(0);
+  expect(events.at(-1)?.reason).toBe('already_imported');
+  const log = JSON.stringify(events);
+  for (const secret of [session.browserToken, session.qr.claimToken, phone.phoneToken, phone.verificationCode, ciphertext, 'Private browser label', 'Private phone label']) expect(log).not.toContain(secret);
+});

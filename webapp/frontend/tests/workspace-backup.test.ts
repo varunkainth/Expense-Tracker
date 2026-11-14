@@ -1,0 +1,24 @@
+import { indexedDB, IDBKeyRange } from 'fake-indexeddb';
+import Dexie from 'dexie';
+import { beforeEach, afterEach, expect, test } from 'bun:test';
+import { ExpenseDatabase } from '../src/lib/database/database';
+import { importWorkspace, verifyWorkspace } from '../src/features/connection/data/workspace-import';
+import { encryptPhoneCopy, restorePhoneCopy, exportPhoneCopies } from '../src/features/workspace/data/workspace-backup';
+import { fixtureWorkspace } from './fixtures/workspace';
+let database: ExpenseDatabase;
+beforeEach(() => { Dexie.dependencies.indexedDB=indexedDB; Dexie.dependencies.IDBKeyRange=IDBKeyRange; database=new ExpenseDatabase(`backup-${crypto.randomUUID()}`); });
+afterEach(async () => {await database.delete();});
+test('password-protected copy round-trips all tables and receipt bytes; wrong passwords cannot modify data', async () => {
+  const snapshot=await fixtureWorkspace(20000); await importWorkspace(database,await verifyWorkspace(snapshot),'original',1,'initial');
+  const before=await exportPhoneCopies([snapshot.deviceId],database);
+  const encrypted=await encryptPhoneCopy('correct-password',[snapshot.deviceId],database);
+  expect(encrypted).not.toContain('Lunch'); expect(encrypted).not.toContain('receipt.pdf');
+  await expect(restorePhoneCopy(encrypted,'wrong-password',database)).rejects.toThrow('Incorrect password');
+  expect(await database.phoneRecords.count()).toBe(22);
+  const changed=structuredClone(snapshot); changed.tables.hotel=[];changed.tables.company_expense_attachments=[];
+  await importWorkspace(database,await verifyWorkspace(changed),'original',2,'changed');
+  expect(await database.phoneFiles.count()).toBe(0);
+  expect(await restorePhoneCopy(encrypted,'correct-password',database)).toBe(22);
+  expect(await exportPhoneCopies([snapshot.deviceId],database)).toEqual(before);
+  expect((await database.phoneFiles.toArray())[0].bytes.length).toBe(20000);
+});

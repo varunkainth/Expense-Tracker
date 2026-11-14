@@ -1,0 +1,65 @@
+import { finishPhoneApproval } from '../src/features/connection/lib/finish-phone-approval';
+import { indexedDB, IDBKeyRange } from 'fake-indexeddb';
+import Dexie from 'dexie';
+import { ExpenseDatabase } from '../../frontend/src/lib/database/database';
+import { importPhoneSnapshot } from '../../frontend/src/features/connection/data/phone-import';
+import { afterEach, expect, test } from 'bun:test';
+import { createCipheriv, randomBytes } from 'node:crypto';
+import { buildApp } from '../../backend/src/app';
+import { readEnv } from '../../backend/src/config/env';
+import { PairingClient, transferContext, decodePairingQr, type PairingQr } from '@expense-tracker/shared';
+import { decryptTransfer } from '../../frontend/src/features/connection/lib/transfer-crypto';
+const app = buildApp(readEnv({ LOG_LEVEL: 'silent' }));
+afterEach(async () => { await app.close(); });
+const auth = (token: string) => ({ authorization: `Bearer ${token}` });
+test('encrypted phone snapshot crosses the authenticated API and is acknowledged only by browser', async () => {
+  const fetcher = (async (url: string | URL | Request, options?: RequestInit) => {
+    const result = await app.inject({ method: options?.method as 'GET' | 'POST' | 'DELETE', url: new URL(String(url)).pathname, headers: options?.headers as Record<string, string>, payload: options?.body as string });
+    return new Response(result.statusCode === 204 ? null : result.body, { status: result.statusCode });
+  }) as typeof fetch;
+  const client = new PairingClient('https://relay.example', fetcher);
+  const session = await client.create('Chrome · Linux');
+  const key = randomBytes(32), secret = key.toString('hex');
+  const qr: PairingQr = decodePairingQr(JSON.stringify({ ...session.qr, syncKey: secret }));
+  const phone = await client.claim(qr, crypto.randomUUID(), 'Phone');
+  expect(JSON.stringify(phone)).not.toContain(secret);
+  const payload = { version: 1, deviceId: crypto.randomUUID(), categories: [{ id: 'food', name: 'Food', icon: null, is_default: 1, created_at: 1700000000000 }], expenses: [{ id: crypto.randomUUID(), category_id: 'food', subcategory_id: null, amount: 12345, description: 'private ₹😀', payment_method: 'UPI', expense_date: 1700000000000, created_at: 1700000000000, updated_at: 1700000000000 }] };
+  const sequence = 1;
+  // Native Expo AES combined() uses this standard IV + ciphertext + 16-byte GCM tag layout.
+  const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', key, iv);
+  cipher.setAAD(Buffer.from(transferContext(session.sessionId, sequence)));
+  const ciphertext = Buffer.concat([iv, cipher.update(JSON.stringify(payload), 'utf8'), cipher.final(), cipher.getAuthTag()]).toString('base64');
+  const envelope = { sequence, ciphertext };
+  await expect(client.publishTransfer(session.sessionId, phone.phoneToken, envelope)).rejects.toThrow();
+  const claimed = await client.status(session.sessionId, session.browserToken);
+  expect((await finishPhoneApproval(client, session, claimed)).state).toBe('claimed');
+  await client.approve(session.sessionId, phone.phoneToken, phone.verificationCode);
+  const approved = await client.status(session.sessionId, session.browserToken);
+  expect((await finishPhoneApproval(client, session, approved)).state).toBe('linked');
+  await expect(client.publishTransfer(session.sessionId, session.browserToken, envelope)).rejects.toThrow();
+  await client.publishTransfer(session.sessionId, phone.phoneToken, envelope);
+  expect(await client.transferReceipt(session.sessionId, phone.phoneToken)).toEqual({ latestSequence: sequence, acknowledgedSequence: 0, importedExpenseCount: null });
+  await expect(client.transferReceipt(session.sessionId, session.browserToken)).rejects.toThrow();
+  const received = await client.receiveTransfer(session.sessionId, session.browserToken);
+  expect(received).toEqual(envelope);
+  expect(await decryptTransfer(secret, session.sessionId, received!)).toEqual(payload);
+  await expect(decryptTransfer(randomBytes(32).toString('hex'), session.sessionId, envelope)).rejects.toThrow();
+  await expect(decryptTransfer(secret, crypto.randomUUID(), envelope)).rejects.toThrow();
+  await expect(decryptTransfer(secret, session.sessionId, { ...envelope, sequence: 2 })).rejects.toThrow();
+  const tampered = Buffer.from(ciphertext, 'base64'); tampered[15] ^= 1;
+  await expect(decryptTransfer(secret, session.sessionId, { sequence, ciphertext: tampered.toString('base64') })).rejects.toThrow();
+  expect((await app.inject({ method: 'POST', url: `/api/v1/pairing/${session.sessionId}/transfer/ack`, headers: auth(phone.phoneToken), payload: { sequence } })).statusCode).toBe(401);
+  await client.acknowledgeTransfer(session.sessionId, session.browserToken, 999);
+  expect(await client.receiveTransfer(session.sessionId, session.browserToken)).not.toBeNull();
+  Dexie.dependencies.indexedDB = indexedDB; Dexie.dependencies.IDBKeyRange = IDBKeyRange;
+  const database = new ExpenseDatabase(`e2e-${crypto.randomUUID()}`);
+  try {
+    await importPhoneSnapshot(database, await decryptTransfer(secret, session.sessionId, received!), session.sessionId, sequence);
+    expect((await database.expenses.get(payload.expenses[0].id))?.amount).toBe(12345);
+    await client.acknowledgeTransfer(session.sessionId, session.browserToken, sequence, undefined, payload.expenses.length);
+  } finally { await database.delete(); }
+  expect(await client.receiveTransfer(session.sessionId, session.browserToken)).toBeNull();
+  expect(await client.transferReceipt(session.sessionId, phone.phoneToken)).toEqual({ latestSequence: sequence, acknowledgedSequence: sequence, importedExpenseCount: payload.expenses.length });
+  await client.revoke(session.sessionId, session.browserToken);
+  await expect(client.publishTransfer(session.sessionId, phone.phoneToken, envelope)).rejects.toThrow();
+});
